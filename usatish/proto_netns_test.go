@@ -178,21 +178,18 @@ func TestLiveMTPOverSSH(t *testing.T) {
 		t.Fatalf("SSH: %v", err)
 	}
 	defer client.Close()
-	// Порт шлюза выбираем так же, как в программе: читаем config.json и проверяем,
-	// что на хосте кто-то слушает. Если в конфиге записан неверный порт, клиент
-	// обязан найти рабочий — именно на этом раньше падало MTP-рукопожатие.
-	port := detectGatewayPort(client, func(s string) string { return s }, nil)
-	if want := envInt("USATYI_LIVE_MTP_PORT"); want > 0 && want != port {
-		t.Logf("порт из config.json/проверки: %d (в конфиге %d)", port, want)
+	// Всё как в программе: поправка часов по серверу, кандидаты портов из ключа и
+	// конфига, настоящее рукопожатие на каждом кандидате.
+	fromKey := 0
+	if p, ok := key.Port(TMTP2); ok {
+		fromKey = p
 	}
-	conn, err := sshForward(client, "127.0.0.1", port)
+	skew := clockSkewBySSH(client, func(s string) string { return s }, nil)
+	t.Logf("поправка часов по серверу: %s", skew.Round(time.Second))
+	ports := gatewayCandidates(fromKey, detectGatewayPort(client, func(s string) string { return s }, nil))
+	sess, link, err := tryGatewayPorts(client, key, ports, skew, false)
 	if err != nil {
-		t.Fatalf("порт шлюза %d: %v", port, err)
-	}
-	link := newTCPLink(conn, false)
-	sess, err := Handshake(key, link)
-	if err != nil {
-		t.Fatalf("MTP поверх SSH: %v", err)
+		t.Fatalf("MTP через SSH (порты %v): %v", ports, err)
 	}
 	t.Logf("сессия: адрес %s, DNS %s, MTU %d", sess.IP, sess.DNS, sess.MTU)
 	if sess.DNS.String() != "172.28.0.53" {
@@ -202,6 +199,7 @@ func TestLiveMTPOverSSH(t *testing.T) {
 		t.Fatalf("через SSH адрес должен быть из пула шлюза, а выдан %s", sess.IP)
 	}
 
+	defer link.Close()
 	run, err := startMTPWith(runOpts{
 		Key: key, Transport: TMTP2, Routing: RAll, Adapter: "usytns",
 		TestRoutes: []string{"10.8.0.1/32", "172.28.0.1/32", "172.28.0.53/32"},
@@ -235,4 +233,78 @@ func TestLiveMTPOverSSH(t *testing.T) {
 		t.Fatalf("STATUS от сервера не получен: %+v %v", st, has)
 	}
 	t.Logf("трафик: rx=%d tx=%d", rx, tx)
+
+	// MTP/3 (маскировка) через тот же SSH-шлюз проверяем последним: серверный шлюз должен
+	// сам распознать кадры TLS-записи. Раньше он ждал только MTP/2 и молчал, а клиент
+	// в этом режиме получал «handshake failed».
+	c3, err := sshForward(client, "127.0.0.1", ports[0])
+	if err != nil {
+		t.Fatalf("MTP/3: канал не открылся: %v", err)
+	}
+	l3 := newTCPLink(c3, true)
+	s3, err := handshake(key, l3, skew)
+	if err != nil {
+		l3.Close()
+		t.Fatalf("MTP/3 (маскировка) через SSH не прошёл: %v", err)
+	}
+	t.Logf("MTP/3 через SSH: адрес %s", s3.IP)
+	l3.Close()
+}
+
+// TestLiveClockSkew — «handshake failed» из-за расхождения часов.
+//
+// Сервер отбрасывает HELLO, если время в нём отличается от серверного больше чем на
+// 120 секунд, и при этом молчит. На телефоне или компьютере с убежавшими часами SSH
+// работает, а рукопожатие падает. Проверяем оба факта: со «сбитым» временем не проходит,
+// с поправкой по серверу (её берёт clockSkewBySSH) — проходит.
+func TestLiveClockSkew(t *testing.T) {
+	if os.Getenv("USATYI_LIVE_CLOCK_SKEW") == "" {
+		t.Skip("нет USATYI_LIVE_CLOCK_SKEW (см. tests/live_netns.sh)")
+	}
+	if os.Geteuid() != 0 {
+		t.Skip("нужен root (TUN-адаптер)")
+	}
+	key, err := ParseKey(os.Getenv("USATYI_LIVE_KEY"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	own := &Owner{
+		Host: os.Getenv("USATYI_LIVE_SSH_HOST"), SSHPort: envInt("USATYI_LIVE_SSH_PORT"),
+		SSHUser: os.Getenv("USATYI_LIVE_SSH_USER"), SSHPass: os.Getenv("USATYI_LIVE_SSH_PASS"), IsRoot: true,
+	}
+	client, _, err := sshDial(own.target())
+	if err != nil {
+		t.Fatalf("SSH: %v", err)
+	}
+	defer client.Close()
+
+	fromKey := 0
+	if p, ok := key.Port(TMTP2); ok {
+		fromKey = p
+	}
+	ports := gatewayCandidates(fromKey, detectGatewayPort(client, func(s string) string { return s }, nil))
+	run := func(skew time.Duration) error {
+		conn, err := sshForward(client, "127.0.0.1", ports[0])
+		if err != nil {
+			return err
+		}
+		link := newTCPLink(conn, false)
+		defer link.Close()
+		_, err = handshake(key, link, skew)
+		return err
+	}
+
+	// Часы «убежали» на 10 минут — сервер должен промолчать.
+	if err := run(-10 * time.Minute); err == nil {
+		t.Fatal("со сбитым временем рукопожатие прошло: сервер не проверяет время — тест не о том")
+	} else {
+		t.Logf("сбитое время отклонено сервером, как и ожидалось: %v", err)
+	}
+
+	// А теперь так, как делает программа: время берём у сервера.
+	skew := clockSkewBySSH(client, func(s string) string { return s }, nil)
+	if err := run(skew); err != nil {
+		t.Fatalf("с поправкой часов (%s) рукопожатие не прошло: %v", skew.Round(time.Second), err)
+	}
+	t.Logf("поправка по серверу (%s) спасла рукопожатие", skew.Round(time.Second))
 }

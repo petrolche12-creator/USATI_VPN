@@ -6,6 +6,7 @@ package core
 
 import (
 	"errors"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -83,21 +84,19 @@ func StartMTPOverSSH(tunnel *MobileTunnel, owner *Owner, keyText string, transpo
 	if onKey != nil && fp != "" {
 		onKey(fp)
 	}
-	port := detectGatewayPort(client)
-	if port <= 0 {
-		port = 18443
+	// Порт шлюза: сначала из ключа, потом из config.json, потом известные стандартные.
+	// На каждом кандидате делаем настоящее рукопожатие — «порт открыт» ничего не значит,
+	// если на нём висит чужой сервис (тогда MTP молчит и получается «handshake failed»).
+	fromKey := 0
+	if p, ok := key.Port(TMTP2); ok {
+		fromKey = p
 	}
-	conn, err := sshForward(client, "127.0.0.1", port)
+	skew := clockSkewBySSH(client)
+	ports := gatewayCandidates(fromKey, readGatewayPort(client))
+	sess, link, err := tryGatewayPorts(client, key, ports, skew, mask)
 	if err != nil {
 		client.Close()
-		return nil, err
-	}
-	link := newTCPLink(conn, mask)
-	sess, err := Handshake(key, link)
-	if err != nil {
-		link.Close()
-		client.Close()
-		return nil, err
+		return nil, fmt.Errorf("MTP-рукопожатие через SSH не прошло (порты %v): %w", ports, err)
 	}
 	s := &MtpSession{link: link, sess: sess, logger: logger}
 	s.log("MTP поднят: адрес %s, DNS %s, MTU %d", sess.IP, sess.DNS, sess.MTU)

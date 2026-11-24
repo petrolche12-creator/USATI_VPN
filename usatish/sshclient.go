@@ -184,59 +184,103 @@ const mtpGatewayPortDefault = 18443
 // mtpGatewayPortLegacy — порт, на котором слушали MTP/2 старые установки (tcp_port).
 const mtpGatewayPortLegacy = 8443
 
-// detectGatewayPort выбирает порт MTP-шлюза на хосте.
-//
-// Порт берётся из config.json (ssh_gateway_port), но конфиг мог остаться от старой
-// установки, а сервер слушать уже другой порт. Поэтому проверяем, что на хосте
-// действительно кто-то принимает соединение, и перебираем известные порты: сначала
-// из конфига, потом стандартные. Иначе SSH-канал открывался на пустой порт и клиент
-// падал на MTP-рукопожатии, хотя SSH-вход проходил успешно.
+// detectGatewayPort читает ssh_gateway_port из config.json на сервере (0 — нет ключа).
 func detectGatewayPort(c *ssh.Client, wrap func(string) string, stdin []byte) int {
 	res, err := sshRun(c, wrap("cat /opt/mtp/config.json"), stdin, nil)
-	fromConfig := 0
-	if err == nil && res.Code == 0 {
-		if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
-			rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
-			rest = strings.TrimLeft(rest, " :\"")
-			var digits strings.Builder
-			for _, r := range rest {
-				if r >= '0' && r <= '9' {
-					digits.WriteRune(r)
-				} else {
-					break
-				}
-			}
-			if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
-				fromConfig = n
-			}
+	if err != nil || res.Code != 0 {
+		return 0
+	}
+	i := strings.Index(res.Stdout, `"ssh_gateway_port"`)
+	if i < 0 {
+		return 0
+	}
+	rest := strings.TrimLeft(res.Stdout[i+len(`"ssh_gateway_port"`):], " :\"")
+	var digits strings.Builder
+	for _, r := range rest {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		} else {
+			break
 		}
 	}
+	if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return 0
+}
 
-	var candidates []int
-	if fromConfig > 0 {
-		candidates = append(candidates, fromConfig)
+// clockSkewBySSH узнаёт время на сервере и возвращает поправку для локальных часов.
+//
+// Сервер MTP отбрасывает HELLO, если время в нём расходится с серверным больше чем на
+// 120 секунд, и при этом молчит. Если на компьютере часы убежали (частая причина),
+// SSH работает, а рукопожатие «не проходит» — поэтому берём время у самого сервера.
+func clockSkewBySSH(c *ssh.Client, wrap func(string) string, stdin []byte) time.Duration {
+	res, err := sshRun(c, wrap("date +%s"), stdin, nil)
+	if err != nil || res.Code != 0 {
+		return 0
 	}
-	for _, p := range []int{mtpGatewayPortLegacy, mtpGatewayPortDefault} {
-		dup := false
-		for _, c := range candidates {
+	var serverUnix int64
+	digits := strings.TrimSpace(res.Stdout)
+	if digits == "" {
+		return 0
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		serverUnix = serverUnix*10 + int64(r-'0')
+	}
+	if serverUnix <= 0 {
+		return 0
+	}
+	skew := time.Until(time.Unix(serverUnix, 0))
+	if skew > -2*time.Second && skew < 2*time.Second {
+		return 0
+	}
+	return skew
+}
+
+// gatewayCandidates — порты шлюза в порядке приоритета (порт из ключа — самый надёжный).
+func gatewayCandidates(fromKey, fromConfig int) []int {
+	out := []int{}
+	add := func(p int) {
+		if p <= 0 {
+			return
+		}
+		for _, c := range out {
 			if c == p {
-				dup = true
+				return
 			}
 		}
-		if !dup {
-			candidates = append(candidates, p)
-		}
+		out = append(out, p)
 	}
-	for _, port := range candidates {
+	add(fromKey)
+	add(fromConfig)
+	add(mtpGatewayPortLegacy)
+	add(mtpGatewayPortDefault)
+	return out
+}
+
+// tryGatewayPorts перебирает порты и на каждом делает настоящее рукопожатие MTP.
+// Проверять только «порт открыт» нельзя: на 8443 часто висит панель или nginx,
+// соединение устанавливается, но MTP молчит — и получается «handshake failed».
+func tryGatewayPorts(c *ssh.Client, key *ServerKey, ports []int, skew time.Duration, mask bool) (*Session, Link, error) {
+	var lastErr error
+	for _, port := range ports {
 		conn, err := c.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			continue
 		}
-		_ = conn.Close()
-		return port
+		link := newTCPLink(conn, mask)
+		sess, err := handshake(key, link, skew)
+		if err == nil {
+			return sess, link, nil
+		}
+		lastErr = err
+		link.Close()
 	}
-	if fromConfig > 0 {
-		return fromConfig
+	if lastErr == nil {
+		lastErr = ErrNoAnswer
 	}
-	return mtpGatewayPortDefault
+	return nil, nil, lastErr
 }

@@ -140,8 +140,19 @@ type Session struct {
 	rep   replayWindow
 }
 
+// HandshakeWithClock выполняет HELLO/WELCOME, добавляя к локальным часам поправку skew.
+// Сервер отбрасывает HELLO, если его время расходится с серверным больше чем на HELLO_SKEW
+// (120 с), и молчит — снаружи это выглядит как «handshake failed» при рабочем SSH.
+func HandshakeWithClock(key *ServerKey, link Link, skew time.Duration) (*Session, error) {
+	return handshake(key, link, skew)
+}
+
 // Handshake выполняет HELLO/WELCOME поверх готового канала.
 func Handshake(key *ServerKey, link Link) (*Session, error) {
+	return handshake(key, link, 0)
+}
+
+func handshake(key *ServerKey, link Link, skew time.Duration) (*Session, error) {
 	// Для TCP первый WELCOME может прийти позже двух секунд (мобильная сеть, помехи).
 	// Даём больше времени, чтобы не повторять HELLO без нужды.
 	attempts, window := 5, 2*time.Second
@@ -158,7 +169,7 @@ func Handshake(key *ServerKey, link Link) (*Session, error) {
 		hello[0] = tHello
 		copy(hello[1:66], cpub)
 		copy(hello[66:74], key.UID)
-		binary.BigEndian.PutUint64(hello[74:82], uint64(time.Now().Unix()))
+		binary.BigEndian.PutUint64(hello[74:82], uint64(time.Now().Add(skew).Unix()))
 		copy(hello[82:98], tag16(key.Secret, lblHello, hello[:82]))
 		if err := link.Send(hello); err != nil {
 			return nil, err

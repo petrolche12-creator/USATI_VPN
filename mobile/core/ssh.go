@@ -166,31 +166,88 @@ func sshForward(c *ssh.Client, host string, port int) (net.Conn, error) {
 	return conn, nil
 }
 
-// detectGatewayPortFrom выбирает рабочий порт шлюза: сначала предложенный (из конфига),
-// затем известные стандартные. Порт считается рабочим, только если через SSH-канал
-// удаётся открыть соединение до localhost:порт. Без такой проверки клиент уходил на
-// пустой порт и падал на MTP-рукопожатии («handshake failed» на шаге 4).
-func detectGatewayPortFrom(c *ssh.Client, fromConfig int) int {
+// clockSkewBySSH узнаёт время на сервере и возвращает поправку для локальных часов.
+//
+// Сервер MTP отбрасывает HELLO, если время в нём расходится с серверным больше чем на
+// 120 секунд, и при этом молчит. У телефонов и свежих Windows-установок часы часто
+// убегают, и тогда SSH работает, а рукопожатие «не проходит» — поэтому берём время
+// прямо у сервера, к которому уже подключены.
+func clockSkewBySSH(c *ssh.Client) time.Duration {
+	res, err := sshRun(c, "date +%s", nil, nil)
+	if err != nil || res.Code != 0 {
+		return 0
+	}
+	var serverUnix int64
+	for _, r := range strings.TrimSpace(res.Stdout) {
+		if r < '0' || r > '9' {
+			return 0
+		}
+		serverUnix = serverUnix*10 + int64(r-'0')
+	}
+	if serverUnix <= 0 {
+		return 0
+	}
+	skew := time.Until(time.Unix(serverUnix, 0))
+	if skew > -2*time.Second && skew < 2*time.Second {
+		return 0 // часы и так совпадают
+	}
+	return skew
+}
+
+// gatewayCandidates — порты, которые стоит попробовать, в порядке приоритета.
+// Порт из ключа (p.tcp) — самый надёжный: его выдал сервер и он же слушает шлюз.
+func gatewayCandidates(fromKey, fromConfig int) []int {
 	const (
 		fallback = 18443
-		legacy   = 8443 // старые установки слушали tcp_port, а клиент ходил на 18443
+		legacy   = 8443 // старые установки слушали tcp_port
 	)
-	candidates := []int{}
-	if fromConfig > 0 {
-		candidates = append(candidates, fromConfig)
-	}
-	for _, p := range []int{legacy, fallback} {
-		dup := false
-		for _, c := range candidates {
+	out := []int{}
+	add := func(p int) {
+		if p <= 0 {
+			return
+		}
+		for _, c := range out {
 			if c == p {
-				dup = true
+				return
 			}
 		}
-		if !dup {
-			candidates = append(candidates, p)
-		}
+		out = append(out, p)
 	}
-	for _, port := range candidates {
+	add(fromKey)
+	add(fromConfig)
+	add(legacy)
+	add(fallback)
+	return out
+}
+
+// tryGatewayPorts перебирает порты и на каждом делает настоящее рукопожатие MTP.
+// Проверять только «порт открыт» нельзя: на 8443 часто висит панель или nginx,
+// соединение устанавливается, но MTP молчит — и получается «handshake failed».
+func tryGatewayPorts(c *ssh.Client, key *ServerKey, ports []int, skew time.Duration, mask bool) (*Session, Link, error) {
+	var lastErr error
+	for _, port := range ports {
+		conn, err := c.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		link := newTCPLink(conn, mask)
+		sess, err := handshake(key, link, skew)
+		if err == nil {
+			return sess, link, nil
+		}
+		lastErr = err
+		link.Close()
+	}
+	if lastErr == nil {
+		lastErr = ErrNoAnswer
+	}
+	return nil, nil, lastErr
+}
+
+// detectGatewayPortFrom оставлен для совместимости: возвращает первый порт,
+// который принимает соединение.
+func detectGatewayPortFrom(c *ssh.Client, fromConfig int) int {
+	for _, port := range gatewayCandidates(0, fromConfig) {
 		conn, err := c.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 		if err != nil {
 			continue
@@ -201,30 +258,30 @@ func detectGatewayPortFrom(c *ssh.Client, fromConfig int) int {
 	if fromConfig > 0 {
 		return fromConfig
 	}
-	return fallback
+	return 18443
 }
 
-// detectGatewayPort читает порт MTP-шлюза из /opt/mtp/config.json на сервере
-// и проверяет, что он действительно принимает соединение.
-func detectGatewayPort(c *ssh.Client) int {
+// readGatewayPort читает ssh_gateway_port из /opt/mtp/config.json на сервере.
+func readGatewayPort(c *ssh.Client) int {
 	res, err := sshRun(c, "cat /opt/mtp/config.json 2>/dev/null", nil, nil)
-	fromConfig := 0
-	if err == nil && res.Code == 0 {
-		if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
-			rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
-			rest = strings.TrimLeft(rest, " :\"")
-			var digits strings.Builder
-			for _, r := range rest {
-				if r >= '0' && r <= '9' {
-					digits.WriteRune(r)
-				} else {
-					break
-				}
-			}
-			if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
-				fromConfig = n
-			}
+	if err != nil || res.Code != 0 {
+		return 0
+	}
+	i := strings.Index(res.Stdout, `"ssh_gateway_port"`)
+	if i < 0 {
+		return 0
+	}
+	rest := strings.TrimLeft(res.Stdout[i+len(`"ssh_gateway_port"`):], " :\"")
+	var digits strings.Builder
+	for _, r := range rest {
+		if r >= '0' && r <= '9' {
+			digits.WriteRune(r)
+		} else {
+			break
 		}
 	}
-	return detectGatewayPortFrom(c, fromConfig)
+	if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
+		return n
+	}
+	return 0
 }

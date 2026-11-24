@@ -489,6 +489,22 @@ class Server:
         if s.conn.stream and not keep_conn:
             s.conn.close()
 
+    def forget(self, s):
+        """Снять регистрацию сессии, оставив её соединение живым до штатного закрытия.
+
+        Старая сессия того же ключа могла висеть после перезапуска приложения. Её кадры
+        больше не принимаем (sid убран), но и ронять её соединение не нужно: клиент
+        получил бы обрыв сразу после рукопожатия. Адрес освобождаем, иначе обратные
+        пакеты продолжали бы уходить в мёртвую сессию и новый клиент остался бы без связи.
+        """
+        self.sessions.pop(s.sid, None)
+        if self.by_uid.get(s.uid) is s:
+            del self.by_uid[s.uid]
+        if self.by_ip.get(s.ip) is s:
+            del self.by_ip[s.ip]
+            if getattr(s, "local", False):
+                self.tunnel_ip.release(s.conn)
+
     def conn_closed(self, conn):
         for s in list(self.sessions.values()):
             if s.conn is conn:
@@ -587,11 +603,16 @@ class Server:
 
         old = self.by_uid.get(uid)
         if old is not None:
-            # Повторный HELLO на том же TCP-соединении: клиент не дождался WELCOME (медленная сеть)
-            # и отправил новый. Старую сессию заменяем, соединение не закрываем: иначе клиент
-            # получит обрыв сразу после рукопожатия.
-            same = old.conn is conn
-            self.drop(old, "" if same else "подключение с другого устройства", keep_conn=same)
+            # Повторный HELLO с того же соединения: клиент не дождался WELCOME (медленная сеть)
+            # и отправил новый — старую сессию заменяем, соединение не закрываем.
+            if old.conn is conn:
+                self.drop(old, "", keep_conn=True)
+            elif old.conn.stream or conn.stream:
+                # Клиент переподключился (приложение перезапустилось, сеть сменилась), оставив
+                # прежнюю сессию по SSH. Рваться нельзя: новая попытка подключения выбивала бы
+                # сама себя, и второе устройство ломало первое. Убираем только запись-дубль:
+                # старая сессия доживает по своему каналу и закроется сама.
+                self.forget(old)
         s = Session(sid, uid, ip, conn, k_s2c, k_c2s)
         self.sessions[sid] = s
         self.by_ip[ip] = s
@@ -813,7 +834,44 @@ class UdpProto(asyncio.DatagramProtocol):
             pass
 
 
+class ReplayedReader:
+    """Отдаёт уже прочитанные байты, а потом читает из настоящего потока."""
+
+    def __init__(self, reader, head):
+        self._reader = reader
+        self._head = head
+
+    async def readexactly(self, n):
+        if self._head:
+            if len(self._head) >= n:
+                out, self._head = self._head[:n], self._head[n:]
+                return out
+            out, self._head = self._head, b""
+            return out + await self._reader.readexactly(n - len(out))
+        return await self._reader.readexactly(n)
+
+    async def read(self, n):
+        if self._head:
+            out, self._head = self._head[:n], self._head[n:]
+            return out
+        return await self._reader.read(n)
+
+
+def looks_masked(head):
+    """MTP/3 — записи, похожие на TLS: 0x16/0x17 0x03 0x03. MTP/2 — длина кадра."""
+    return len(head) >= 3 and head[0] in (0x16, 0x17) and head[1] == 0x03 and head[2] == 0x03
+
+
 async def handle_stream(srv, reader, writer, mask):
+    if mask is None:
+        head = b""
+        try:
+            head = await asyncio.wait_for(reader.readexactly(3), READ_TIMEOUT)
+        except (asyncio.IncompleteReadError, asyncio.TimeoutError, OSError):
+            writer.close()
+            return
+        mask = looks_masked(head)
+        reader = ReplayedReader(reader, head)
     conn = StreamConn(writer, mask)
     try:
         while True:
@@ -1015,7 +1073,9 @@ async def run_server(cfg):
     # Порт обязан совпадать с тем, что клиент читает из config.json (ssh_gateway_port),
     # иначе SSH-канал открывается на «пустой» порт и MTP-рукопожатие не проходит.
     gateway_port = int(cfg.get("ssh_gateway_port") or cfg["tcp_port"])
-    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, False), "127.0.0.1", gateway_port)
+    # Внутри SSH-канала клиент может работать и как MTP/2, и как MTP/3 (маскировка):
+    # флаг кадра известен уже по первому байту, поэтому определяем его на лету.
+    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, None), "127.0.0.1", gateway_port)
     mask_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, True), "0.0.0.0", cfg["mask_port"])
 
     stop = asyncio.Event()

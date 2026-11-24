@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net"
-	"strconv"
 	"sync"
 	"time"
 
@@ -132,23 +131,22 @@ func startChain(o chainOpts) (*chainRun, error) {
 	}
 	logf("SSH-вход выполнен")
 
-	port := detectGatewayPort(client, o.Server.wrap, o.Server.stdinFor())
-	logf("шаг 3/4: открываю SSH-канал до 127.0.0.1:%d на хосте (порт MTP-VPN внутри SSH)", port)
-	conn, err := sshForward(client, "127.0.0.1", port)
-	if err != nil {
-		client.Close()
-		return fail(err)
+	// Порт шлюза ищем с настоящим рукопожатием на каждом кандидате: из ключа (p.tcp),
+	// из config.json, затем стандартные. Часы берём по серверу — иначе сервер молча
+	// отбрасывает HELLO, если время на компьютере отличается больше чем на 2 минуты.
+	fromKey := 0
+	if p, ok := o.Key.Port(TMTP2); ok {
+		fromKey = p
 	}
-	logf("шаг 4/4: поднимаю %s через канал", o.Run.Transport.Label())
-
-	// MTP/2 поверх готового TCP-соединения (SSH-канал).
-	link := newTCPLink(conn, false)
-	sess, err := Handshake(o.Key, link)
+	skew := clockSkewBySSH(client, o.Server.wrap, o.Server.stdinFor())
+	ports := gatewayCandidates(fromKey, detectGatewayPort(client, o.Server.wrap, o.Server.stdinFor()))
+	logf("шаг 3/4: открываю SSH-канал до 127.0.0.1 (порты %v, поправка часов %s)", ports, skew.Round(time.Second))
+	sess, link, err := tryGatewayPorts(client, o.Key, ports, skew, o.Run.Transport == TMTP3)
 	if err != nil {
-		link.Close()
 		client.Close()
 		return fail(fmt.Errorf("MTP-сервер через SSH не ответил: %w", err))
 	}
+	logf("шаг 4/4: поднимаю %s через канал", o.Run.Transport.Label())
 	run, err := startMTPWith(o.Run, link, sess)
 	if err != nil {
 		link.Close()
@@ -167,7 +165,6 @@ func startChain(o chainOpts) (*chainRun, error) {
 		_ = client.Close()
 		awg.Stop()
 	}()
-	_ = strconv.Itoa(port)
 	return c, nil
 }
 

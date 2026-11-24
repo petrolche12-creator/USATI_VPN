@@ -80,6 +80,24 @@ ip netns exec cli env USATYI_LIVE_KEY="$KEY" \
   $BIN -test.run '^TestLiveMTPOverSSH$' -test.v
 rc=$?
 set -e
+
+# Расхождение часов проверяем прямо в Go-тесте (USATYI_LIVE_CLOCK_SKEW): он сдвигает
+# «часы» клиента и убеждается, что поправка по серверу спасает рукопожатие.
+if [ "${SKIP_SKEW:-0}" != "1" ]; then
+  echo "== проверка расхождения часов (сдвиг клиента на 10 минут)"
+  set +e
+  ip netns exec cli env USATYI_LIVE_KEY="$KEY" \
+    USATYI_LIVE_SSH_HOST=$SRV_IP USATYI_LIVE_SSH_PORT=$SSH_PORT \
+    USATYI_LIVE_SSH_USER=$SSH_USER USATYI_LIVE_SSH_PASS=$SSH_PASS \
+    USATYI_LIVE_CLOCK_SKEW=10m \
+    $BIN -test.run '^TestLiveClockSkew$' -test.v 2>&1 | tail -8
+  src=$?
+  set -e
+else
+  src=0
+fi
+[ $rc -eq 0 ] && rc=$src
+
 echo "== журнал SSH-шлюза:"; tail -2 $DIR/ssh.log 2>/dev/null
 echo "== журнал заглушек:"; tail -2 $DIR/stubs.log 2>/dev/null
 if [ $rc -ne 0 ]; then
