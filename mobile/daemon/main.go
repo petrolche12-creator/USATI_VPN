@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"usatyi.ru/vpn/mobile/core"
@@ -51,12 +52,12 @@ func main() {
 		_ = os.Remove(*confPath)
 	}
 
-	chain, err := core.StartChain(string(raw), loggerFunc(logf))
+	chain, err := safeStart(string(raw), logf)
 	if err != nil {
 		logf("подключение не удалось: %v", err)
 		os.Exit(1)
 	}
-	defer chain.Stop()
+	defer safeStop(chain)
 
 	addr := *socket
 	if addr == "" {
@@ -90,7 +91,40 @@ func main() {
 		logf("приложение не подключилось: %v", err)
 		return
 	}
-	core.Serve(conn, chain, logf)
+	// Служба в ядре тоже может упасть на редком пакете или гонке в библиотеке.
+	// Тогда приложение получит закрытый сокет и покажет ошибку, а не пустоту.
+	func() {
+		defer func() {
+			if r := recover(); r != nil {
+				logf("PANIC в цикле ядра: %v\n%s", r, debug.Stack())
+			}
+		}()
+		core.Serve(conn, chain, logf)
+	}()
+}
+
+// safeStart поднимает цепочку, превращая панику в обычную ошибку.
+// Без этого исключение в Go-ядре убивает процесс, и Android показывает
+// только "ядро завершилось при запуске" без причины.
+func safeStart(paramsJSON string, logf loggerFunc) (chain *core.Chain, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			logf("PANIC при запуске ядра: %v\n%s", r, debug.Stack())
+			err = fmt.Errorf("ядро упало при запуске: %v", r)
+		}
+	}()
+	return core.StartChain(paramsJSON, logf)
+}
+
+// safeStop опускает туннель и не даёт панике при закрытии убить процесс.
+func safeStop(chain *core.Chain) {
+	defer func() {
+		if r := recover(); r != nil {
+			// журнала здесь уже может не быть — печатаем в stderr
+			fmt.Fprintf(os.Stderr, "core: PANIC при остановке: %v\n%s\n", r, debug.Stack())
+		}
+	}()
+	chain.Stop()
 }
 
 // loggerFunc — журнал ядра в stderr (родитель читает его из процесса).

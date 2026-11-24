@@ -107,3 +107,36 @@ func TestVersion(t *testing.T) {
 		t.Fatal("пустая версия ядра")
 	}
 }
+
+// TestAWGStopIsSafeOnceAndManyTimes — регрессия на падение ядра при подключении.
+//
+// Раньше ядро падало с "panic: close of closed channel": amneziawg-go сам закрывает
+// tun-устройство, а startChain вызывал tunDev.Close() ещё раз при ошибке. На Android
+// это выглядело как "Ядро завершилось при запуске". Теперь Stop безопасен и
+// вызывается сколько угодно раз.
+func TestAWGStopIsSafeOnceAndManyTimes(t *testing.T) {
+	conf := "[Interface]\nPrivateKey = " + base64.StdEncoding.EncodeToString(make([]byte, 32)) +
+		"\nAddress = 10.8.1.2/32\n\n[Peer]\nPublicKey = " +
+		base64.StdEncoding.EncodeToString(bytes32()) + "\nEndpoint = 127.0.0.1:51999\nAllowedIPs = 0.0.0.0/0\n"
+
+	tun, err := StartAWG(conf, nil)
+	if err != nil {
+		t.Skipf("AmneziaWG не поднялся в этой среде: %v", err)
+	}
+	// Первая и повторные остановки не должны паниковать.
+	tun.Stop()
+	tun.Stop()
+	tun.Stop()
+
+	// После Stop статистика не падает.
+	_ = tun.Rx()
+	_ = tun.Tx()
+}
+
+func bytes32() []byte {
+	b := make([]byte, 32)
+	for i := range b {
+		b[i] = byte(i + 32)
+	}
+	return b
+}

@@ -63,7 +63,7 @@ PY
 "$AAPT2" link -o "$WORK/base.apk" \
 	-I "$TOOLS/android.jar" --manifest "$WORK/AndroidManifest.xml" \
 	--java "$WORK/gen" "$WORK/res.zip" \
-	--min-sdk-version 28 --target-sdk-version 34 --version-code 10 --version-name 1.3.1
+	--min-sdk-version 28 --target-sdk-version 34 --version-code 11 --version-name 1.3.2
 
 echo "== R.java (ECJ: javac не нужен)"
 mkdir -p "$WORK/rjava"

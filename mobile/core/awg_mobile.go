@@ -161,9 +161,11 @@ func StartAWG(confText string, logger Logger) (*MobileTunnel, error) {
 		server: cfg.Peer.Endpoint,
 		stats:  devStats(dev),
 		stop: func() {
+			// Важно: dev.Close() сам закрывает tun-устройство (amneziawg-go),
+			// поэтому tunDev.Close() здесь НЕ вызывается — иначе netstack падает
+			// с "panic: close of closed channel", и ядро умирает при подключении.
 			_ = dev.Down()
 			dev.Close()
-			_ = tunDev.Close()
 		},
 		logf: logf,
 	}
