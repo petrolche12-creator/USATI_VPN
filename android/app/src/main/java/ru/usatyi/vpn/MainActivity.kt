@@ -34,6 +34,33 @@ class MainActivity : AppCompatActivity() {
 
     /** Подключение, которое ждёт разрешения Android на VPN. */
     private var pendingStart: (() -> Unit)? = null
+
+    /** Выбор файла .conf Amnezia в системном окне документов. */
+    private val pickConf = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) {
+            VpnState.idle("Файл .conf не выбран")
+            return@registerForActivityResult
+        }
+        ChainUi.loadConf(this, uri) { result ->
+            runOnUiThread {
+                toast(result)
+                connect.onState()
+            }
+        }
+    }
+
+    /** Открывает системный выбор файла для .conf Amnezia. */
+    fun pickAmneziaFile() {
+        if (isActive()) {
+            toast("Сначала отключите VPN")
+            return
+        }
+        runCatching {
+            pickConf.launch(arrayOf("application/octet-stream", "text/plain", "application/x-config", "*/*"))
+        }.onFailure {
+            toast("Не удалось открыть выбор файла: ${it.message}")
+        }
+    }
     private val handler = Handler(Looper.getMainLooper())
 
     private val vpnPermission = registerForActivityResult(
@@ -53,6 +80,9 @@ class MainActivity : AppCompatActivity() {
     ) { }
 
     private val stateListener: (VpnState.Snapshot) -> Unit = { runOnUiThread { connect.onState() } }
+
+    /** Цепочка (Amnezia) меняет состояние чаще: обновляем экран так же. */
+    private val chainListener: (Unit) -> Unit = { runOnUiThread { connect.onState() } }
 
     /** Раз в секунду обновляем таймер сеанса и проверяем связь с системой. */
     private val ticker = object : Runnable {
@@ -91,10 +121,12 @@ class MainActivity : AppCompatActivity() {
     override fun onStart() {
         super.onStart()
         VpnState.addListener(stateListener)
+        ChainState.addListener(chainListener)
     }
 
     override fun onStop() {
         VpnState.removeListener(stateListener)
+        ChainState.removeListener(chainListener)
         super.onStop()
     }
 
@@ -174,6 +206,16 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startKey(key: SavedKey, sk: ServerKey, ok: Choice.Ok) {
+        // Загружен .conf Amnezia — значит подключаемся цепочкой AmneziaWG → SSH → MTP,
+        // а не напрямую к серверу: так пользователь и просил.
+        val conf = AmneziaStore.load(this)
+        if (conf != null && ok.transport != Transport.WG && ok.transport != Transport.SS) {
+            startChain(key, ok, conf)
+            return
+        }
+        if (conf != null && ok.transport == Transport.WG) {
+            toast("Выбран способ WireGuard напрямую. Чтобы идти через Amnezia, выберите MTP/1–3")
+        }
         val session = VpnState.Session(key.id, key.name, sk.host, ok.transport, ok.routing, ok.mode)
         if (ok.transport == Transport.WG) {
             VpnState.connecting(session, "Поднимаю WireGuard…")
@@ -199,8 +241,28 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /** Подключение цепочкой: AmneziaWG по .conf, затем SSH и MTP. */
+    private fun startChain(key: SavedKey, ok: Choice.Ok, conf: AwgConfig) {
+        val session = VpnState.Session(key.id, key.name, conf.peer.host, ok.transport, ok.routing, ok.mode)
+        VpnState.connecting(session, "Шаг 1 из 3: поднимаю AmneziaWG…")
+        ChainState.stage("Шаг 1 из 3: AmneziaWG по файлу «${conf.name}»…")
+        val intent = Intent(this, ChainService::class.java)
+            .setAction(ChainService.ACTION_START)
+            .putExtra(ChainService.EXTRA_KEY_ID, key.id)
+            .putExtra(ChainService.EXTRA_NAME, key.name)
+            .putExtra(ChainService.EXTRA_KEY, key.text)
+            .putExtra(ChainService.EXTRA_TRANSPORT, ok.transport.name)
+            .putExtra(ChainService.EXTRA_ROUTING, ok.routing.name)
+            .putStringArrayListExtra(ChainService.EXTRA_APPS, ArrayList(key.apps))
+        ContextCompat.startForegroundService(this, intent)
+    }
+
     /** Отключает текущий туннель (MTP — через службу, WireGuard — через библиотеку). */
     fun disconnect() {
+        // Если цепочка поднимается или работает — сначала гасим её.
+        if (ChainState.phase != ChainState.Phase.OFF) {
+            startService(Intent(this, ChainService::class.java).setAction(ChainService.ACTION_STOP))
+        }
         val session = VpnState.current.session
         if (session != null && session.transport == Transport.WG) {
             Thread {

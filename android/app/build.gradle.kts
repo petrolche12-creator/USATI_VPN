@@ -11,8 +11,13 @@ android {
         applicationId = "ru.usatyi.vpn"
         minSdk = 28
         targetSdk = 34
-        versionCode = 8
-        versionName = "1.2.5"
+        versionCode = 9
+        versionName = "1.3.0"
+
+        // Ядро цепочки Amnezia лежит в jniLibs как libusatyi_core.so: только arm64 (Go без cgo).
+        ndk {
+            abiFilters += "arm64-v8a"
+        }
     }
 
     // Ключ подписи для личной сборки. Нужен, чтобы обновления ставились поверх старой версии.

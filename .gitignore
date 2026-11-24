@@ -7,5 +7,9 @@
 *.apk
 *.aab
 *.exe
+!/dist/UsatyiVPN.exe
 # Android-движок AmneziaWG собирается в CI (см. .github/workflows)
 /android/app/libs/*.aar
+
+# Готовое ядро не храним в git: его собирает mobile/build-android.sh или CI
+/android/app/src/main/jniLibs/

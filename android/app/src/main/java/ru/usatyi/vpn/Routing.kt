@@ -17,13 +17,26 @@ object Routes {
             lines.map { it.trim() }.filter { it.isNotEmpty() && !it.startsWith("#") }.toList()
         }
 
-    /** Настраивает маршруты и приложения для VpnService.Builder в выбранном режиме. */
-    fun apply(b: VpnService.Builder, routing: Routing, apps: Set<String>, ownPackage: String, nonRu: List<String>) {
+    /**
+     * Настраивает маршруты и приложения для VpnService.Builder в выбранном режиме.
+     *
+     * excludeSelf = false нужен цепочке Amnezia: там приложение уже исключено из VPN
+     * (своё ядро нельзя заворачивать в собственный туннель), и второй вызов системы
+     * привёл бы к ошибке «приложение одновременно и разрешено, и запрещено».
+     */
+    fun apply(
+        b: VpnService.Builder,
+        routing: Routing,
+        apps: Set<String>,
+        ownPackage: String,
+        nonRu: List<String>,
+        excludeSelf: Boolean = true,
+    ) {
         when (routing) {
             Routing.ALL -> {
                 b.addRoute("0.0.0.0", 0)
                 b.addRoute("::", 0) // IPv6 направляем в туннель и отбрасываем: не утекает мимо VPN
-                b.addDisallowedApplication(ownPackage)
+                if (excludeSelf) b.addDisallowedApplication(ownPackage)
             }
             Routing.APPS -> {
                 for (pkg in apps) {
@@ -42,7 +55,7 @@ object Routes {
                     b.addRoute(cidr.substring(0, slash), cidr.substring(slash + 1).toInt())
                 }
                 b.addRoute("::", 0)
-                b.addDisallowedApplication(ownPackage)
+                if (excludeSelf) b.addDisallowedApplication(ownPackage)
             }
         }
     }

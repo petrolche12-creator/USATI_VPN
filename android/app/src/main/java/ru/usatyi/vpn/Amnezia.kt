@@ -156,11 +156,20 @@ object AmneziaStore {
 
     /** Загруженный конфиг или null. */
     fun load(c: Context): AwgConfig? {
-        val f = file(c)
-        if (!f.isFile) return null
-        val name = c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(K_NAME, "") ?: ""
-        return runCatching { Amnezia.parse(f.readText(), name.ifEmpty { "amnezia" }) }.getOrNull()
+        val text = rawText(c).takeIf { it.isNotEmpty() } ?: return null
+        val name = displayName(c)
+        return runCatching { Amnezia.parse(text, name) }.getOrNull()
     }
+
+    /** Текст загруженного .conf (без разбора). Пустая строка, если файла нет. */
+    fun rawText(c: Context): String {
+        val f = file(c)
+        if (!f.isFile) return ""
+        return runCatching { f.readText() }.getOrDefault("")
+    }
+
+    /** Когда файл загружен (для экрана). */
+    fun savedAt(c: Context): Long = if (file(c).isFile) file(c).lastModified() else 0L
 
     fun displayName(c: Context): String =
         c.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(K_NAME, "")?.ifEmpty { "amnezia" } ?: "amnezia"

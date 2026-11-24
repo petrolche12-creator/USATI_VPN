@@ -23,6 +23,14 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
 
     init {
         b.mainButton.setOnClickListener { onMainButton() }
+        b.amneziaAddBtn.setOnClickListener { act.pickAmneziaFile() }
+        b.amneziaRemoveBtn.setOnClickListener {
+            Ui.confirm(act, "Убрать файл Amnezia с телефона? Сам сервер Amnezia не меняется.", "Убрать") {
+                AmneziaStore.forget(act)
+                ChainState.off()
+                onState()
+            }
+        }
         b.addKeyBtn.setOnClickListener { showAddKeyDialog(null) }
         b.clipboardAddBtn.setOnClickListener {
             val text = offeredClipboard
@@ -46,6 +54,20 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
     fun onState() {
         renderKeys()
         renderStatus()
+        renderAmnezia()
+    }
+
+    /** Блок Amnezia: что загружено и как это связано с цепочкой. */
+    private fun renderAmnezia() {
+        val cfg = AmneziaStore.load(act)
+        val chain = ChainState.phase
+        b.amneziaStatus.text = when {
+            cfg == null -> "Файл .conf не загружен. Без него цепочка не подключится."
+            chain == ChainState.Phase.RUNNING -> "Подключено через «${cfg.name}»: ${cfg.peer.endpoint}"
+            else -> Amnezia.summary(cfg)
+        }
+        b.amneziaRemoveBtn.visibility = if (cfg == null) View.GONE else View.VISIBLE
+        b.amneziaAddBtn.text = if (cfg == null) "Добавить Amnezia" else "Заменить файл .conf"
     }
 
     /** Раз в секунду: таймер и счётчики. Раз в две секунды: проверка, что VPN действительно поднят. */
@@ -102,21 +124,32 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
             choice is Choice.Ok -> "Способ: ${choice.transport.label} · ${choice.routing.label}" + modeNote(choice.mode)
             choice is Choice.Error -> "Для этого ключа выбранный режим недоступен: ${choice.message}"
             session != null -> "Способ: ${session.transport.label} · ${session.routing.label}" + modeNote(session.mode)
-            selected != null -> "Способ: ${selected.transport.label} · ${selected.routing.label}"
+            selected != null -> "Способ: ${selected.transport.label} · ${selected.routing.label}" + chainNote()
             else -> "Добавьте ключ, который вам прислали"
         }
 
-        val msg = if (s.phase == VpnState.Phase.CONNECTED || s.message == "Не подключено" || s.message == "Отключено") {
-            ""
-        } else {
-            s.message
+        val chain = ChainState.phase
+        if (chain == ChainState.Phase.RUNNING) {
+            b.statusDetails.text = (b.statusDetails.text?.toString().orEmpty()) + "\nЧерез Amnezia: ${AmneziaStore.displayName(act)} → SSH"
+        }
+        // Пока цепочка поднимается, показываем её этап; ошибка цепочки важнее прочих сообщений.
+        val msg = when {
+            chain == ChainState.Phase.STARTING || chain == ChainState.Phase.WAIT_VPN -> ChainState.stage
+            chain == ChainState.Phase.FAILED -> ChainState.error
+            s.phase == VpnState.Phase.CONNECTED || s.message == "Не подключено" || s.message == "Отключено" -> ""
+            else -> s.message
         }
         b.statusMessage.text = msg
         b.statusMessage.visibility = if (msg.isEmpty()) View.GONE else View.VISIBLE
 
         b.statusTraffic.text = if (s.phase == VpnState.Phase.CONNECTED) {
             val sec = (System.currentTimeMillis() - s.startedAt) / 1000L
-            "Сеанс ${Ui.duration(sec)} · получено ${Ui.bytes(s.rx)} · отправлено ${Ui.bytes(s.tx)}"
+            val chainLine = if (ChainState.phase == ChainState.Phase.RUNNING) {
+                "\nAmneziaWG: ${Ui.bytes(ChainState.awgRx)} / ${Ui.bytes(ChainState.awgTx)}"
+            } else {
+                ""
+            }
+            "Сеанс ${Ui.duration(sec)} · получено ${Ui.bytes(s.rx)} · отправлено ${Ui.bytes(s.tx)}$chainLine"
         } else {
             ""
         }
@@ -158,12 +191,22 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
                     b.mainButton.text = "Скопировать ссылку ss:// для Shadowsocks"
                     b.mainButton.isEnabled = true
                 }
+                AmneziaStore.load(act) != null && selected.transport.isMtp -> {
+                    b.mainButton.text = "Подключить через Amnezia «${AmneziaStore.displayName(act)}»"
+                    b.mainButton.isEnabled = true
+                }
                 else -> {
                     b.mainButton.text = "Подключить «${selected.name}»"
                     b.mainButton.isEnabled = true
                 }
             }
         }
+    }
+
+    /** Подсказка, пойдёт ли подключение цепочкой через Amnezia. */
+    private fun chainNote(): String {
+        val cfg = AmneziaStore.load(act) ?: return ""
+        return "\nЦепочка: AmneziaWG «${cfg.name}» → SSH → MTP"
     }
 
     private fun onMainButton() {
