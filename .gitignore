@@ -1,0 +1,11 @@
+# Сборки и кэши
+/android/build/
+/android/app/build/
+/android/.gradle/
+/android/.idea/
+/android/local.properties
+*.apk
+*.aab
+*.exe
+# Android-движок AmneziaWG собирается в CI (см. .github/workflows)
+/android/app/libs/*.aar

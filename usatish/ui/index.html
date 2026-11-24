@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Усатый VPN</title>
+<link rel="icon" type="image/png" href="icon.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand"><img src="icon.png" alt="" width="34" height="34"><span>Усатый VPN</span></div>
+  <button id="quitBtn" class="ghost" title="Отключить VPN и закрыть программу">Выйти</button>
+</header>
+
+<main>
+  <section class="page is-active" id="page-connect">
+    <article class="card status" id="statusCard">
+      <h1 id="stTitle">Не подключено</h1>
+      <p class="key-line" id="stKey"></p>
+      <p class="muted" id="stDetails"></p>
+      <p class="notice hidden" id="stMsg"></p>
+      <p class="mono" id="stTraffic"></p>
+      <p class="hidden" id="stQuota"></p>
+      <div class="bar hidden" id="quotaWrap"><div id="quotaBar"></div></div>
+      <button id="mainBtn" class="primary wide big">Подключить</button>
+    </article>
+
+    <div class="section-head">
+      <h2>Мои ключи</h2>
+      <p class="muted">Нажмите ключ, чтобы выбрать его. «Подключить» поднимает VPN с настройками этого ключа. Значок ⋮ открывает способ, маршрутизацию и название.</p>
+    </div>
+    <div id="keyList" class="list"></div>
+    <p id="keysEmpty" class="empty hidden">Ключей пока нет. Нажмите «Добавить ключ» и вставьте строку mtp://, которую вам прислали.</p>
+    <button id="addKeyBtn" class="outline wide">+ Добавить ключ</button>
+  </section>
+
+  <section class="page" id="page-server">
+    <article class="card">
+      <h1 id="srvTitle">Сервер не настроен</h1>
+      <p class="muted" id="srvStatus"></p>
+      <div class="row">
+        <button id="srvSetupBtn" class="primary">Настроить сервер</button>
+        <button id="srvCheckBtn" class="outline hidden">Обновить</button>
+      </div>
+      <button id="srvForgetBtn" class="link hidden">Забыть сервер на этом компьютере</button>
+    </article>
+
+    <div class="section-head">
+      <h2>Ключи для друзей</h2>
+      <p class="muted">Лимит и срок проверяет сервер: исчерпанный или истёкший ключ перестаёт работать сразу.</p>
+    </div>
+    <div id="srvKeyList" class="list"></div>
+    <p id="srvKeysEmpty" class="empty hidden"></p>
+    <button id="createKeyBtn" class="primary wide">+ Создать ключ</button>
+  </section>
+
+  <section class="page" id="page-settings">
+    <div class="section-head">
+      <h2>Режим работы</h2>
+      <p class="muted">Выберите, как работает VPN. Изменение применится при следующем подключении.</p>
+    </div>
+    <div id="modeList" class="list"></div>
+    <p id="modeNotice" class="notice hidden">VPN сейчас подключён. Новый режим применится при следующем подключении.</p>
+
+    <div class="section-head">
+      <h2>Протокол</h2>
+      <p class="muted" id="advText"></p>
+    </div>
+    <article class="card">
+      <div class="switch-row">
+        <div>
+          <h1 class="switch-title">Выбрать протокол вручную</h1>
+          <p class="muted small">Выключено: протокол выбирает режим. Включено: вы сами выбираете MTP/1, MTP/2, MTP/3 или WireGuard. Выбор действует для всех ключей, где этот способ есть.</p>
+        </div>
+        <label class="switch" title="Выбрать протокол вручную"><input type="checkbox" id="advOn"><span class="slider"></span></label>
+      </div>
+    </article>
+    <div id="protoList" class="list hidden"></div>
+  </section>
+</main>
+
+<nav class="bottomnav" role="tablist">
+  <button class="tab is-active" data-tab="connect" role="tab">Подключиться</button>
+  <button class="tab" data-tab="server" role="tab">Создать</button>
+  <button class="tab" data-tab="settings" role="tab">Настройки</button>
+</nav>
+
+<dialog id="dlg"></dialog>
+<div id="toast" class="toast hidden" role="status"></div>
+<div id="overlay" class="overlay hidden"><div class="overlay-box">Программа закрыта. Окно можно закрыть.</div></div>
+<script src="app.js"></script>
+</body>
+</html>
