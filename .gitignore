@@ -8,6 +8,7 @@
 *.aab
 *.exe
 !/dist/UsatyiVPN.exe
+!/dist/UsatyiVPN.apk
 # Android-движок AmneziaWG собирается в CI (см. .github/workflows)
 /android/app/libs/*.aar
 

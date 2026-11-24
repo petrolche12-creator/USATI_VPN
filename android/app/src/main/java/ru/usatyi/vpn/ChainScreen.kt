@@ -3,8 +3,8 @@ package ru.usatyi.vpn
 import android.content.Context
 import android.net.Uri
 import android.view.View
-import androidx.appcompat.app.AlertDialog
-import ru.usatyi.vpn.databinding.DialogTextBinding
+
+import ru.usatyi.vpn.binding.DialogTextBinding
 
 /**
  * Загрузка файла .conf Amnezia и показ хода цепочки.
@@ -58,7 +58,7 @@ object ChainUi {
             Приложение сначала подключается к серверу Amnezia по этому файлу,
             а уже через него — к вашему VPN по SSH. Без файла цепочка не работает.
         """.trimIndent()
-        AlertDialog.Builder(ctx)
+        DialogBuilder(ctx)
             .setTitle("Как получить .conf")
             .setView(d.root)
             .setPositiveButton("Выбрать файл") { _, _ -> ctx.pickAmneziaFile() }

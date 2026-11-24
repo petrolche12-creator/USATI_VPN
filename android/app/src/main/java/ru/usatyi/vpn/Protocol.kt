@@ -67,7 +67,7 @@ enum class Transport(val label: String, val portKey: String, val own: Boolean, v
     MTP1("MTP/1 · UDP", "udp", true, "основной способ, самый быстрый; UDP 443"),
     MTP2("MTP/2 · TCP", "tcp", true, "тот же протокол поверх TCP, для сетей, где режут UDP; TCP 8443"),
     MTP3("MTP/3 · маскировка", "mask", true, "тот же протокол, замаскирован под TLS; TCP 443"),
-    WG("WireGuard", "wg", false, "стандартный WireGuard, работает прямо в приложении; UDP 51820"),
+    WG("WireGuard", "wg", false, "стандартный WireGuard; в этой сборке выключен — выберите MTP"),
     SS("Shadowsocks", "ss", false, "стандартный Shadowsocks: туннель поднимает приложение Shadowsocks, здесь копируется ссылка ss://");
 
     val isMtp: Boolean get() = this == MTP1 || this == MTP2 || this == MTP3

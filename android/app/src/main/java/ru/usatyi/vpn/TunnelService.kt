@@ -8,7 +8,7 @@ import android.content.pm.ServiceInfo
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
-import androidx.core.app.NotificationCompat
+
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import java.io.IOException
@@ -264,13 +264,13 @@ class TunnelService : VpnService() {
             Intent(this, TunnelService::class.java).setAction(ACTION_STOP),
             PendingIntent.FLAG_IMMUTABLE,
         )
-        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+        val notification = Notifications.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.drawable.ic_power)
             .setContentTitle("Усатый VPN")
             .setContentText(text)
             .setContentIntent(openApp)
             .setOngoing(true)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(Notifications.PRIORITY_LOW)
             .addAction(0, "Отключить", stopIntent)
             .build()
         if (Build.VERSION.SDK_INT >= 34) {

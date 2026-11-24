@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+    
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -12,13 +12,13 @@
         android:padding="16dp">
 
         <!-- Что сейчас поднято и что сделает главная кнопка -->
-        <com.google.android.material.card.MaterialCardView
+        <ru.usatyi.vpn.CardView
             android:id="@+id/statusCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="0dp">
+            
+            
+            >
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -31,7 +31,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Не подключено"
-                    android:textAppearance="?attr/textAppearanceHeadlineSmall"
+                    android:textSize="24sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -39,20 +39,20 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:textAppearance="?attr/textAppearanceBodyLarge" />
+                    android:textSize="16sp" />
 
                 <TextView
                     android:id="@+id/statusDetails"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/statusMessage"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="8dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textSize="14sp"
                     android:textStyle="bold"
                     android:visibility="gone" />
 
@@ -61,17 +61,17 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="12dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+                    android:textSize="14sp" />
 
                 <TextView
                     android:id="@+id/statusQuota"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="4dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textSize="14sp"
                     android:visibility="gone" />
 
-                <com.google.android.material.progressindicator.LinearProgressIndicator
+                <ru.usatyi.vpn.ProgressLine
                     android:id="@+id/quotaBar"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
@@ -87,18 +87,18 @@
                     android:textAllCaps="false"
                     android:textSize="16sp" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </ru.usatyi.vpn.CardView>
 
 
         <!-- Цепочка: .conf Amnezia → AmneziaWG → SSH → MTP -->
-        <com.google.android.material.card.MaterialCardView
+        <ru.usatyi.vpn.CardView
             android:id="@+id/amneziaCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="1dp">
+            
+            
+            >
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -110,7 +110,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Amnezia"
-                    android:textAppearance="?attr/textAppearanceTitleLarge"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -118,14 +118,14 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="2dp"
                     android:text="Сначала телефон подключается к вашему серверу Amnezia по файлу .conf (в Amnezia это «Поделиться»), а уже через него — к вашему VPN по SSH."
-                    android:textAppearance="?attr/textAppearanceBodySmall" />
+                    android:textSize="12sp" />
 
                 <TextView
                     android:id="@+id/amneziaStatus"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="10dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium"
+                    android:textSize="14sp"
                     android:textStyle="bold" />
 
                 <LinearLayout
@@ -144,7 +144,7 @@
 
                     <Button
                         android:id="@+id/amneziaRemoveBtn"
-                        style="@style/Widget.Material3.Button.TextButton"
+                        style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
@@ -152,7 +152,7 @@
                         android:textAllCaps="false" />
                 </LinearLayout>
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </ru.usatyi.vpn.CardView>
 
         <!-- Ключи -->
         <TextView
@@ -160,7 +160,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="Мои ключи"
-            android:textAppearance="?attr/textAppearanceTitleLarge"
+            android:textSize="20sp"
             android:textStyle="bold" />
 
         <TextView
@@ -168,7 +168,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:text="Нажмите ключ, чтобы выбрать его. «Подключить» поднимает VPN с настройками этого ключа. Значок ⋮ открывает способ, маршрутизацию и название."
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
 
         <LinearLayout
             android:id="@+id/keyList"
@@ -182,27 +182,27 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="Ключей пока нет. Нажмите «Добавить ключ» и вставьте строку mtp://, которую вам прислали."
-            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textSize="14sp"
             android:visibility="gone" />
 
         <Button
             android:id="@+id/addKeyBtn"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
             android:text="+ Добавить ключ"
             android:textAllCaps="false" />
 
-        <com.google.android.material.card.MaterialCardView
+        <ru.usatyi.vpn.CardView
             android:id="@+id/clipboardCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:visibility="gone"
-            app:cardCornerRadius="16dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="1dp">
+            
+            
+            >
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -214,7 +214,7 @@
                     android:id="@+id/clipboardText"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+                    android:textSize="14sp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -224,7 +224,7 @@
 
                     <Button
                         android:id="@+id/clipboardHideBtn"
-                        style="@style/Widget.Material3.Button.TextButton"
+                        style="?android:attr/borderlessButtonStyle"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="Не сейчас"
@@ -238,7 +238,7 @@
                         android:textAllCaps="false" />
                 </LinearLayout>
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </ru.usatyi.vpn.CardView>
 
     </LinearLayout>
 </ScrollView>

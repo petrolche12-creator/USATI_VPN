@@ -1,79 +1,29 @@
 package ru.usatyi.vpn
 
-import android.content.Context
-import com.wireguard.android.backend.GoBackend
-import com.wireguard.android.backend.Tunnel
-import com.wireguard.config.Config
-import java.io.BufferedReader
-import java.io.StringReader
-
-/** Текст конфигурации WireGuard (формат wg-quick) для клиента из ключа. */
+/**
+ * Режим «WireGuard напрямую» в этой сборке отключён.
+ *
+ * Раньше он поднимался библиотекой com.wireguard.android:tunnel, но она требует сборки с
+ * Gradle и Maven-репозиториев. Эта сборка APK делается без внешних библиотек (см.
+ * tools/build-apk.sh), поэтому для ключей без Amnezia остаются свои способы MTP/1–3,
+ * а с загруженным .conf — цепочка AmneziaWG → SSH → MTP.
+ *
+ * Заглушки ниже сохраняют вызовы в остальном коде: вместо туннеля пользователь видит
+ * понятное сообщение, а не сбой.
+ */
 object WgConfig {
-    fun build(key: ServerKey, routing: Routing, apps: Set<String>, nonRu: List<String>): String {
-        val w = requireNotNull(key.wg) { "в ключе нет параметров WireGuard" }
-        val port = requireNotNull(key.portFor(Transport.WG)) { "в ключе нет порта WireGuard" }
-        val allowed = if (routing == Routing.NOT_RU) {
-            (nonRu + "::/0").joinToString(", ")
-        } else {
-            "0.0.0.0/0, ::/0"
-        }
-        val sb = StringBuilder()
-        sb.append("[Interface]\n")
-        sb.append("PrivateKey = ").append(w.privateKey).append('\n')
-        sb.append("Address = ").append(w.address).append('\n')
-        sb.append("DNS = ").append(w.dns).append('\n')
-        sb.append("MTU = 1380\n")
-        if (routing == Routing.APPS && apps.isNotEmpty()) {
-            sb.append("IncludedApplications = ").append(apps.joinToString(", ")).append('\n')
-        }
-        sb.append("\n[Peer]\n")
-        sb.append("PublicKey = ").append(w.serverPublicKey).append('\n')
-        sb.append("AllowedIPs = ").append(allowed).append('\n')
-        sb.append("Endpoint = ").append(key.host).append(':').append(port).append('\n')
-        sb.append("PersistentKeepalive = 20\n")
-        return sb.toString()
-    }
+    fun build(key: ServerKey, routing: Routing, apps: Set<String>, nonRu: List<String>): String =
+        throw MtpException(WgController.notAvailable)
 }
 
-/** Туннель WireGuard на встроенной библиотеке WireGuard for Android (com.wireguard.android:tunnel). */
 object WgController {
-    private var backend: GoBackend? = null
-    private var lastConfig: Config? = null
+    const val notAvailable =
+        "В этой сборке режим WireGuard выключен: выберите способ MTP/1–3 или загрузите .conf Amnezia"
 
-    private val tunnel = object : Tunnel {
-        override fun getName(): String = "usatyi"
-        override fun onStateChange(newState: Tunnel.State) {}
+    fun up(context: android.content.Context, configText: String) {
+        throw MtpException(notAvailable)
     }
-
-    /** Поднимает туннель. Вызывать не из главного потока. Бросает исключение при ошибке. */
-    @Synchronized
-    fun up(context: Context, configText: String) {
-        val b = backend ?: GoBackend(context.applicationContext).also { backend = it }
-        val cfg = Config.parse(BufferedReader(StringReader(configText)))
-        b.setState(tunnel, Tunnel.State.UP, cfg)
-        lastConfig = cfg
-    }
-
-    /** Опускает туннель. Вызывать не из главного потока. */
-    @Synchronized
-    fun down() {
-        val b = backend ?: return
-        val cfg = lastConfig ?: return
-        b.setState(tunnel, Tunnel.State.DOWN, cfg)
-    }
-
-    /** Поднят ли туннель по данным библиотеки. */
-    @Synchronized
-    fun isUp(): Boolean {
-        val b = backend ?: return false
-        return b.getState(tunnel) == Tunnel.State.UP
-    }
-
-    /** Байты за текущий сеанс: получено и отправлено; null, если туннеля не было. */
-    @Synchronized
-    fun traffic(): Pair<Long, Long>? {
-        val b = backend ?: return null
-        val st = b.getStatistics(tunnel) ?: return null
-        return Pair(st.totalRx(), st.totalTx())
-    }
+    fun down() {}
+    fun isUp(): Boolean = false
+    fun traffic(): Pair<Long, Long>? = null
 }

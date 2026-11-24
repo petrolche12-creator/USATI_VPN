@@ -7,7 +7,7 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.RadioButton
 import android.widget.RadioGroup
-import ru.usatyi.vpn.databinding.ScreenSettingsBinding
+import ru.usatyi.vpn.binding.ScreenSettingsBinding
 
 /**
  * Вкладка «Настройки». Режим выбирается всегда. Ручной выбор протокола выключен по умолчанию.

@@ -29,7 +29,7 @@ enum class ProtoChoice(val label: String, val transport: Transport?) {
     MTP1("MTP/1 · UDP", Transport.MTP1),
     MTP2("MTP/2 · TCP", Transport.MTP2),
     MTP3("MTP/3 · маскировка", Transport.MTP3),
-    WG("WireGuard", Transport.WG),
+    WG("WireGuard", Transport.WG), // в этой сборке выключен: см. Wg.kt
 }
 
 /** Настройки: режим (всегда действует), ручной выбор протокола (выключен по умолчанию) и сам протокол. */
@@ -84,8 +84,8 @@ object Modes {
         }
         return when (m.mode) {
             Mode.GAME -> {
-                val t = listOf(Transport.MTP1, Transport.WG).firstOrNull(supports)
-                    ?: return Choice.Error("Для игрового режима нужен MTP/1 или WireGuard, а в ключе их нет. Выберите обычный режим или другой ключ")
+                val t = Transport.MTP1.takeIf(supports)
+                    ?: return Choice.Error("Для игрового режима нужен MTP/1 (UDP), а в ключе его нет. Выберите обычный режим или другой ключ")
                 Choice.Ok(t, routing, m.mode)
             }
             Mode.ANON -> if (supports(Transport.MTP3)) {

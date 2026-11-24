@@ -4,12 +4,12 @@ import android.content.Intent
 import android.view.View
 import android.widget.RadioButton
 import android.widget.RadioGroup
-import androidx.appcompat.app.AlertDialog
-import androidx.core.widget.doAfterTextChanged
-import ru.usatyi.vpn.databinding.DialogAddKeyBinding
-import ru.usatyi.vpn.databinding.DialogKeySettingsBinding
-import ru.usatyi.vpn.databinding.ItemKeyBinding
-import ru.usatyi.vpn.databinding.ScreenConnectBinding
+
+
+import ru.usatyi.vpn.binding.DialogAddKeyBinding
+import ru.usatyi.vpn.binding.DialogKeySettingsBinding
+import ru.usatyi.vpn.binding.ItemKeyBinding
+import ru.usatyi.vpn.binding.ScreenConnectBinding
 
 /**
  * Вкладка «Подключиться». Сверху — что сейчас поднято (и что будет при нажатии кнопки),
@@ -92,8 +92,8 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
             VpnState.Phase.ERROR -> Tone.ERROR
             VpnState.Phase.IDLE -> Tone.NEUTRAL
         }
-        b.statusCard.setCardBackgroundColor(Ui.containerColor(b.statusCard, tone))
-        val on = Ui.onContainerColor(b.statusCard, tone)
+        b.statusCard.setCardBackgroundColor(Colors.container(tone))
+        val on = Colors.onContainer(tone)
         for (tv in listOf(b.statusTitle, b.statusKey, b.statusDetails, b.statusMessage, b.statusTraffic, b.statusQuota)) {
             tv.setTextColor(on)
         }
@@ -274,7 +274,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
             onState()
         }
         r.rowCard.setStrokeWidth(if (selected) Ui.dp(act, 2) else 0)
-        r.rowCard.setStrokeColor(Ui.attrColor(r.rowCard, androidx.appcompat.R.attr.colorPrimary))
+        r.rowCard.setStrokeColor(Ui.accent())
         return r.root
     }
 
@@ -340,7 +340,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
             }
         }
 
-        lateinit var dialog: AlertDialog
+        lateinit var dialog: android.app.AlertDialog
         d.ksDelete.setOnClickListener {
             Ui.confirm(act, "Удалить ключ «${k.name}» с этого телефона? На сервере он останется.", "Удалить") {
                 KeyStore.remove(act, k.id)
@@ -348,7 +348,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
                 onState()
             }
         }
-        dialog = AlertDialog.Builder(act)
+        dialog = DialogBuilder(act)
             .setTitle("Настройки ключа")
             .setView(d.root)
             .setPositiveButton("Сохранить") { _, _ ->
@@ -406,7 +406,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
                 .sortedBy { it.second.lowercase() }
             val checked = BooleanArray(list.size) { selected.contains(list[it].first) }
             act.runOnUiThread {
-                AlertDialog.Builder(act)
+                DialogBuilder(act)
                     .setTitle("Какие приложения пойдут через VPN")
                     .setMultiChoiceItems(list.map { it.second }.toTypedArray(), checked) { _, which, isChecked ->
                         checked[which] = isChecked
@@ -426,19 +426,21 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
     fun showAddKeyDialog(prefill: String?) {
         val d = DialogAddKeyBinding.inflate(act.layoutInflater)
         if (!prefill.isNullOrBlank()) d.akInput.setText(prefill)
-        val dialog = AlertDialog.Builder(act)
+        val dialog = DialogBuilder(act)
             .setTitle("Добавить ключ")
             .setView(d.root)
             .setPositiveButton("Добавить", null)
             .setNegativeButton("Отмена", null)
             .create()
+        dialog.show()
         d.akPaste.setOnClickListener {
             val text = act.clipboardText()
             if (text == null) act.toast("В буфере обмена нет текста") else d.akInput.setText(text)
         }
-        d.akInput.doAfterTextChanged { checkKeyInput(d, dialog, it?.toString().orEmpty()) }
-        dialog.setOnShowListener {
-            dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+        d.akInput.afterTextChanged { checkKeyInput(d, dialog, it) }
+        val positive = dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
+        // Нажатие своей ручкой: ключ проверяется и добавляется, окно закрывается только при успехе.
+        positive.setOnClickListener {
                 val text = d.akInput.text.toString().trim()
                 try {
                     val r = KeyStore.addOrUpdate(act, text)
@@ -457,12 +459,10 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
                     d.akPreview.text = "Не получилось добавить: ${e.message}"
                 }
             }
-            checkKeyInput(d, dialog, d.akInput.text.toString())
-        }
-        dialog.show()
+        checkKeyInput(d, dialog, d.akInput.text.toString())
     }
 
-    private fun checkKeyInput(d: DialogAddKeyBinding, dialog: AlertDialog, raw: String) {
+    private fun checkKeyInput(d: DialogAddKeyBinding, dialog: android.app.AlertDialog, raw: String) {
         val text = raw.trim()
         var ok = false
         if (text.isEmpty()) {
@@ -492,7 +492,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
                 d.akPreview.text = "Это не ключ mtp://…"
             }
         }
-        dialog.getButton(AlertDialog.BUTTON_POSITIVE)?.isEnabled = ok
+        dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)?.isEnabled = ok
     }
 
     /** Если в буфере обмена есть новый ключ, предлагаем добавить его одним нажатием. */
@@ -521,13 +521,7 @@ class ConnectScreen(private val act: MainActivity, private val b: ScreenConnectB
         val session = s.session ?: return
         if (s.phase != VpnState.Phase.CONNECTED) return
         Thread {
-            if (session.transport == Transport.WG) {
-                if (WgController.isUp()) {
-                    WgController.traffic()?.let { (rx, tx) -> VpnState.traffic(rx, tx) }
-                } else {
-                    VpnState.idle("VPN выключен в системе")
-                }
-            } else if (System.currentTimeMillis() - s.startedAt > 8000L && !act.vpnTransportPresent()) {
+            if (System.currentTimeMillis() - s.startedAt > 8000L && !act.vpnTransportPresent()) {
                 VpnState.idle("VPN выключен в системе")
             }
         }.start()

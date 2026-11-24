@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:app="http://schemas.android.com/apk/res-auto"
+    
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:fillViewport="true">
@@ -15,18 +15,18 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:text="Сервер"
-            android:textAppearance="?attr/textAppearanceHeadlineSmall"
+            android:textSize="24sp"
             android:textStyle="bold" />
 
         <!-- Состояние сервера и установка -->
-        <com.google.android.material.card.MaterialCardView
+        <ru.usatyi.vpn.CardView
             android:id="@+id/serverCard"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            app:cardCornerRadius="20dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="0dp">
+            
+            
+            >
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -39,7 +39,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="Сервер не настроен"
-                    android:textAppearance="?attr/textAppearanceTitleLarge"
+                    android:textSize="20sp"
                     android:textStyle="bold" />
 
                 <TextView
@@ -47,7 +47,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
-                    android:textAppearance="?attr/textAppearanceBodyMedium" />
+                    android:textSize="14sp" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -65,7 +65,7 @@
 
                     <Button
                         android:id="@+id/serverCheckBtn"
-                        style="@style/Widget.Material3.Button.OutlinedButton"
+                        style="?android:attr/borderlessButtonStyle"
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
                         android:layout_marginStart="8dp"
@@ -77,7 +77,7 @@
 
                 <Button
                     android:id="@+id/serverForgetBtn"
-                    style="@style/Widget.Material3.Button.TextButton"
+                    style="?android:attr/borderlessButtonStyle"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="start"
@@ -86,7 +86,7 @@
                     android:textAllCaps="false"
                     android:visibility="gone" />
             </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
+        </ru.usatyi.vpn.CardView>
 
         <!-- Ключи, выданные на сервере -->
         <TextView
@@ -94,7 +94,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="24dp"
             android:text="Ключи для друзей"
-            android:textAppearance="?attr/textAppearanceTitleLarge"
+            android:textSize="20sp"
             android:textStyle="bold" />
 
         <TextView
@@ -102,7 +102,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
             android:text="Лимит и срок проверяет сервер: когда ключ исчерпан или истёк, он перестаёт работать сразу."
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
 
         <LinearLayout
             android:id="@+id/serverKeyList"
@@ -115,7 +115,7 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
-            android:textAppearance="?attr/textAppearanceBodyMedium" />
+            android:textSize="14sp" />
 
         <Button
             android:id="@+id/createKeyBtn"

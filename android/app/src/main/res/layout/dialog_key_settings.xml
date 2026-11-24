@@ -16,7 +16,7 @@
             android:id="@+id/ksServer"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:textAppearance="?attr/textAppearanceBodyMedium"
+            android:textSize="14sp"
             android:textStyle="bold" />
 
         <TextView
@@ -24,14 +24,14 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="2dp"
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
 
         <TextView
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="Название у вас"
-            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <EditText
@@ -45,14 +45,14 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="Способ подключения"
-            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:text="Недоступные способы не входят в этот ключ."
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
 
         <RadioGroup
             android:id="@+id/ksTransportGroup"
@@ -64,7 +64,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:text="Что идёт через VPN"
-            android:textAppearance="?attr/textAppearanceTitleSmall"
+            android:textSize="15sp"
             android:textStyle="bold" />
 
         <RadioGroup
@@ -74,7 +74,7 @@
 
         <Button
             android:id="@+id/ksApps"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -84,7 +84,7 @@
 
         <Button
             android:id="@+id/ksCopySs"
-            style="@style/Widget.Material3.Button.OutlinedButton"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="8dp"
@@ -94,7 +94,7 @@
 
         <Button
             android:id="@+id/ksDelete"
-            style="@style/Widget.Material3.Button.TextButton"
+            style="?android:attr/borderlessButtonStyle"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="start"
@@ -107,6 +107,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="4dp"
             android:text="Изменения применятся при следующем подключении."
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

@@ -3,8 +3,6 @@ package ru.usatyi.vpn
 import android.app.Activity
 import android.content.Context
 import android.view.View
-import androidx.appcompat.app.AlertDialog
-import com.google.android.material.color.MaterialColors
 import java.util.Locale
 
 /** Смысловой тон карточки: нейтральный, в процессе, подключено, ошибка. */
@@ -14,28 +12,12 @@ enum class Tone { NEUTRAL, WORKING, ACTIVE, ERROR }
 object Ui {
     fun dp(c: Context, v: Int): Int = (v * c.resources.displayMetrics.density).toInt()
 
-    /** Цвет атрибута темы (0, если атрибута нет). */
-    fun attrColor(view: View, attr: Int): Int = MaterialColors.getColor(view, attr, 0)
+    /** Цвет из темы приложения (свои цвета вместо библиотеки Material). */
+    fun accent(): Int = Theme.primary
 
-    fun containerColor(view: View, tone: Tone): Int = attrColor(
-        view,
-        when (tone) {
-            Tone.NEUTRAL -> com.google.android.material.R.attr.colorSurfaceVariant
-            Tone.WORKING -> com.google.android.material.R.attr.colorSecondaryContainer
-            Tone.ACTIVE -> com.google.android.material.R.attr.colorPrimaryContainer
-            Tone.ERROR -> com.google.android.material.R.attr.colorErrorContainer
-        },
-    )
+    fun containerColor(view: View, tone: Tone): Int = Colors.container(tone)
 
-    fun onContainerColor(view: View, tone: Tone): Int = attrColor(
-        view,
-        when (tone) {
-            Tone.NEUTRAL -> com.google.android.material.R.attr.colorOnSurfaceVariant
-            Tone.WORKING -> com.google.android.material.R.attr.colorOnSecondaryContainer
-            Tone.ACTIVE -> com.google.android.material.R.attr.colorOnPrimaryContainer
-            Tone.ERROR -> com.google.android.material.R.attr.colorOnErrorContainer
-        },
-    )
+    fun onContainerColor(view: View, tone: Tone): Int = Colors.onContainer(tone)
 
     /** Размер в понятных единицах: байты, КБ, МБ, ГБ. */
     fun bytes(n: Long): String = when {
@@ -51,7 +33,7 @@ object Ui {
 
     /** Диалог подтверждения: действие необратимо или меняет чужой доступ. */
     fun confirm(act: Activity, message: String, action: String, onYes: () -> Unit) {
-        AlertDialog.Builder(act)
+        DialogBuilder(act)
             .setMessage(message)
             .setPositiveButton(action) { _, _ -> onYes() }
             .setNegativeButton("Отмена", null)

@@ -1,4 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <style name="Theme.UsatyiVpn" parent="Theme.Material3.DayNight.NoActionBar" />
+    <!-- Тема на системном Material: без библиотек AndroidX/Material APK собирается где угодно. -->
+    <style name="Theme.UsatyiVpn" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:colorPrimary">#3F51B5</item>
+        <item name="android:colorPrimaryDark">#2A3A8F</item>
+        <item name="android:colorAccent">#3F51B5</item>
+        <item name="android:windowBackground">#FBF8FF</item>
+        <item name="android:statusBarColor">#FBF8FF</item>
+        <item name="android:windowLightStatusBar">true</item>
+    </style>
 </resources>

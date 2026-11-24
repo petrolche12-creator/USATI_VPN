@@ -2,17 +2,17 @@ package ru.usatyi.vpn
 
 import android.content.Intent
 import android.view.View
-import androidx.appcompat.app.AlertDialog
+
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 import org.json.JSONObject
-import ru.usatyi.vpn.databinding.DialogCreateKeyBinding
-import ru.usatyi.vpn.databinding.DialogKeyResultBinding
-import ru.usatyi.vpn.databinding.DialogServerSetupBinding
-import ru.usatyi.vpn.databinding.DialogTextBinding
-import ru.usatyi.vpn.databinding.ItemServerKeyBinding
-import ru.usatyi.vpn.databinding.ScreenCreateBinding
+import ru.usatyi.vpn.binding.DialogCreateKeyBinding
+import ru.usatyi.vpn.binding.DialogKeyResultBinding
+import ru.usatyi.vpn.binding.DialogServerSetupBinding
+import ru.usatyi.vpn.binding.DialogTextBinding
+import ru.usatyi.vpn.binding.ItemServerKeyBinding
+import ru.usatyi.vpn.binding.ScreenCreateBinding
 
 /**
  * Вкладка «Создать»: состояние сервера, установка по SSH и ключи, которые выданы друзьям.
@@ -158,9 +158,9 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
         r.skStatus.text = status
         r.skStatus.setTextColor(
             when (status) {
-                "активен" -> Ui.attrColor(r.skStatus, androidx.appcompat.R.attr.colorPrimary)
-                "отключён" -> Ui.attrColor(r.skStatus, com.google.android.material.R.attr.colorOnSurfaceVariant)
-                else -> Ui.attrColor(r.skStatus, com.google.android.material.R.attr.colorError)
+                "активен" -> Ui.accent()
+                "отключён" -> Theme.onSurfaceVariant
+                else -> Theme.errorContainer
             },
         )
         r.skTraffic.text = "${Ui.bytes(used)} из ${limitText(limit)} · срок: ${dateText(expires)}"
@@ -180,7 +180,7 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
             "Сбросить счётчик трафика",
             "Удалить ключ",
         )
-        AlertDialog.Builder(act)
+        DialogBuilder(act)
             .setTitle("Ключ «$name»")
             .setItems(items) { _, which ->
                 when (which) {
@@ -231,7 +231,7 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
         val d = DialogCreateKeyBinding.inflate(act.layoutInflater)
         d.ckDays.setText("30")
         d.ckLimit.setText("10")
-        AlertDialog.Builder(act)
+        DialogBuilder(act)
             .setTitle("Новый ключ")
             .setView(d.root)
             .setPositiveButton("Создать") { _, _ ->
@@ -266,7 +266,7 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
         val d = DialogKeyResultBinding.inflate(act.layoutInflater)
         d.dkText.text = key
         d.dkAddSelf.visibility = if (created) View.VISIBLE else View.GONE
-        val dialog = AlertDialog.Builder(act)
+        val dialog = DialogBuilder(act)
             .setTitle(if (created) "Ключ «$name» создан" else "Ключ «$name»")
             .setView(d.root)
             .create()
@@ -302,7 +302,7 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
         d.ssSshPort.setText((old?.sshPort ?: 22).toString())
         d.ssVpnPort.setText((old?.vpnPort ?: 443).toString())
         d.ssPass.setText(old?.sshPass.orEmpty())
-        AlertDialog.Builder(act)
+        DialogBuilder(act)
             .setTitle(if (old == null) "Настроить сервер" else "Переустановить сервер")
             .setView(d.root)
             .setPositiveButton("Установить") { _, _ ->
@@ -343,14 +343,14 @@ class ServerScreen(private val act: MainActivity, private val b: ScreenCreateBin
     /** Установка с живым журналом: окно не закрывается, пока установка не закончится. */
     private fun startInstall(form: Owner) {
         val t = DialogTextBinding.inflate(act.layoutInflater)
-        val dialog = AlertDialog.Builder(act)
+        val dialog = DialogBuilder(act)
             .setTitle("Установка на ${form.host}")
             .setView(t.root)
             .setCancelable(false)
             .setPositiveButton("Готово", null)
             .create()
         dialog.show()
-        val ok = dialog.getButton(AlertDialog.BUTTON_POSITIVE)
+        val ok = dialog.getButton(android.app.AlertDialog.BUTTON_POSITIVE)
         ok.isEnabled = false
         appendLog(t, "Установка: VPN UDP ${form.vpnPort}, вход ${form.sshUser}@${form.host}")
         Thread {

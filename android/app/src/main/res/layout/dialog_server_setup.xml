@@ -61,6 +61,6 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="12dp"
             android:text="Пароль нужен только для установки и сохраняется на телефоне. После установки смените пароль root на сервере."
-            android:textAppearance="?attr/textAppearanceBodySmall" />
+            android:textSize="12sp" />
     </LinearLayout>
 </ScrollView>

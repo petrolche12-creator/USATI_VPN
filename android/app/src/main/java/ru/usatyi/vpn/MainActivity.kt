@@ -13,19 +13,18 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.widget.Toast
-import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AppCompatActivity
-import androidx.core.content.ContextCompat
-import ru.usatyi.vpn.databinding.ActivityMainBinding
-import ru.usatyi.vpn.databinding.ScreenConnectBinding
-import ru.usatyi.vpn.databinding.ScreenCreateBinding
-import ru.usatyi.vpn.databinding.ScreenSettingsBinding
+
+
+import ru.usatyi.vpn.binding.ActivityMainBinding
+import ru.usatyi.vpn.binding.ScreenConnectBinding
+import ru.usatyi.vpn.binding.ScreenCreateBinding
+import ru.usatyi.vpn.binding.ScreenSettingsBinding
 
 /**
  * Главный экран: три вкладки («Подключиться», «Создать», «Настройки») и запуск/остановка туннеля.
  * Экраны сами рисуют себя по VpnState и KeyStore; здесь только действия, которые трогают систему.
  */
-class MainActivity : AppCompatActivity() {
+class MainActivity : android.app.Activity() {
 
     private lateinit var main: ActivityMainBinding
     private lateinit var connect: ConnectScreen
@@ -36,16 +35,18 @@ class MainActivity : AppCompatActivity() {
     private var pendingStart: (() -> Unit)? = null
 
     /** Выбор файла .conf Amnezia в системном окне документов. */
-    private val pickConf = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+    private val pickConf = object : FilePicker() {
+        override fun onPicked(uri: android.net.Uri?) {
         if (uri == null) {
             VpnState.idle("Файл .conf не выбран")
-            return@registerForActivityResult
+            return
         }
-        ChainUi.loadConf(this, uri) { result ->
+        ChainUi.loadConf(activity!!, uri) { result ->
             runOnUiThread {
                 toast(result)
                 connect.onState()
             }
+        }
         }
     }
 
@@ -56,28 +57,26 @@ class MainActivity : AppCompatActivity() {
             return
         }
         runCatching {
-            pickConf.launch(arrayOf("application/octet-stream", "text/plain", "application/x-config", "*/*"))
+            pickConf.launch()
         }.onFailure {
             toast("Не удалось открыть выбор файла: ${it.message}")
         }
     }
     private val handler = Handler(Looper.getMainLooper())
 
-    private val vpnPermission = registerForActivityResult(
-        ActivityResultContracts.StartActivityForResult(),
-    ) { res ->
+    private val vpnPermission = PermissionLauncher { _, resultCode ->
         val start = pendingStart
         pendingStart = null
-        if (res.resultCode == RESULT_OK && start != null) {
+        if (resultCode == RESULT_OK && start != null) {
             start()
         } else {
             VpnState.idle("Нет разрешения на VPN")
         }
     }
 
-    private val notifPermission = registerForActivityResult(
-        ActivityResultContracts.RequestPermission(),
-    ) { }
+    private val notifPermission = object : SimpleLauncher() {
+        override fun onResult() {}
+    }
 
     private val stateListener: (VpnState.Snapshot) -> Unit = { runOnUiThread { connect.onState() } }
 
@@ -107,12 +106,18 @@ class MainActivity : AppCompatActivity() {
         server = ServerScreen(this, createBinding)
         settings = SettingsScreen(this, settingsBinding)
 
-        main.bottomNav.setOnItemSelectedListener { item ->
-            showScreen(item.itemId)
+        main.bottomNav.setTitles(listOf("Подключиться", "Создать", "Настройки"))
+        main.bottomNav.onPick = { index ->
+            showScreen(index)
             true
         }
-        showScreen(R.id.nav_connect)
+        showScreen(0)
 
+        // Системные окна (выбор файла, разрешения) — через старый onActivityResult:
+        // так приложение не тянет библиотеки AndroidX.
+        pickConf.attach(this)
+        vpnPermission.attach(this)
+        notifPermission.attach(this)
         if (Build.VERSION.SDK_INT >= 33) {
             notifPermission.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -142,12 +147,22 @@ class MainActivity : AppCompatActivity() {
         super.onPause()
     }
 
-    private fun showScreen(id: Int) {
-        connect.setVisible(id == R.id.nav_connect)
-        server.setVisible(id == R.id.nav_create)
-        if (id == R.id.nav_create) server.onShown()
-        settings.setVisible(id == R.id.nav_settings)
-        if (id == R.id.nav_settings) settings.onShown()
+    /** 0 — «Подключиться», 1 — «Создать», 2 — «Настройки». */
+    private fun showScreen(index: Int) {
+        connect.setVisible(index == 0)
+        server.setVisible(index == 1)
+        if (index == 1) server.onShown()
+        settings.setVisible(index == 2)
+        if (index == 2) settings.onShown()
+    }
+
+    /** Результаты системных окон: выбор .conf и разрешение на VPN. */
+    @Deprecated("Вызов системного механизма Android")
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        pickConf.deliver(requestCode, resultCode, data)
+        vpnPermission.deliver(requestCode, resultCode)
+        notifPermission.deliver(requestCode)
     }
 
     // ---------- действия, которые трогают систему
@@ -218,16 +233,7 @@ class MainActivity : AppCompatActivity() {
         }
         val session = VpnState.Session(key.id, key.name, sk.host, ok.transport, ok.routing, ok.mode)
         if (ok.transport == Transport.WG) {
-            VpnState.connecting(session, "Поднимаю WireGuard…")
-            Thread {
-                try {
-                    val nonRu = if (ok.routing == Routing.NOT_RU) Routes.notRu(this) else emptyList()
-                    WgController.up(this, WgConfig.build(sk, ok.routing, key.apps, nonRu))
-                    VpnState.connected(session)
-                } catch (e: Exception) {
-                    VpnState.failed("WireGuard: ${e.message ?: e.javaClass.simpleName}")
-                }
-            }.start()
+            VpnState.failed(WgController.notAvailable)
         } else {
             val intent = Intent(this, TunnelService::class.java)
                 .setAction(TunnelService.ACTION_START)
@@ -237,7 +243,7 @@ class MainActivity : AppCompatActivity() {
                 .putExtra(TunnelService.EXTRA_TRANSPORT, ok.transport.name)
                 .putExtra(TunnelService.EXTRA_ROUTING, ok.routing.name)
                 .putStringArrayListExtra(TunnelService.EXTRA_APPS, ArrayList(key.apps))
-            ContextCompat.startForegroundService(this, intent)
+            startForegroundService(this, intent)
         }
     }
 
@@ -254,28 +260,16 @@ class MainActivity : AppCompatActivity() {
             .putExtra(ChainService.EXTRA_TRANSPORT, ok.transport.name)
             .putExtra(ChainService.EXTRA_ROUTING, ok.routing.name)
             .putStringArrayListExtra(ChainService.EXTRA_APPS, ArrayList(key.apps))
-        ContextCompat.startForegroundService(this, intent)
+        startForegroundService(this, intent)
     }
 
     /** Отключает текущий туннель (MTP — через службу, WireGuard — через библиотеку). */
     fun disconnect() {
-        // Если цепочка поднимается или работает — сначала гасим её.
+        // Если цепочка поднимается или работает — гасим и её.
         if (ChainState.phase != ChainState.Phase.OFF) {
             startService(Intent(this, ChainService::class.java).setAction(ChainService.ACTION_STOP))
         }
-        val session = VpnState.current.session
-        if (session != null && session.transport == Transport.WG) {
-            Thread {
-                try {
-                    WgController.down()
-                } catch (e: Exception) {
-                    // туннель уже опущен
-                }
-                VpnState.idle("Отключено")
-            }.start()
-        } else {
-            startService(Intent(this, TunnelService::class.java).setAction(TunnelService.ACTION_STOP))
-        }
+        startService(Intent(this, TunnelService::class.java).setAction(TunnelService.ACTION_STOP))
     }
 
     /** Есть ли в системе активный VPN (нужно, чтобы не показывать «подключено» после отключения в настройках Android). */
