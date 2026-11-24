@@ -1012,14 +1012,17 @@ async def run_server(cfg):
         with contextlib.suppress(OSError):
             sock.setsockopt(socket.SOL_SOCKET, opt, 4 << 20)
     # MTP/2 слушает только localhost: клиент ходит к нему по SSH, порт наружу не открыт.
-    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, False), "127.0.0.1", cfg["tcp_port"])
+    # Порт обязан совпадать с тем, что клиент читает из config.json (ssh_gateway_port),
+    # иначе SSH-канал открывается на «пустой» порт и MTP-рукопожатие не проходит.
+    gateway_port = int(cfg.get("ssh_gateway_port") or cfg["tcp_port"])
+    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, False), "127.0.0.1", gateway_port)
     mask_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, True), "0.0.0.0", cfg["mask_port"])
 
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     task = asyncio.create_task(srv.housekeeping())
-    log(f"MTP/1 UDP {cfg['port']}, MTP/2 TCP {cfg['tcp_port']}, MTP/3 TCP {cfg['mask_port']}, "
+    log(f"MTP/1 UDP {cfg['port']}, MTP/2 TCP (SSH-шлюз) {gateway_port}, MTP/3 TCP {cfg['mask_port']}, "
         f"туннель {TUN_NAME} {SERVER_IP}/24")
     await stop.wait()
     task.cancel()
@@ -1176,6 +1179,8 @@ def cmd_init(args):
         "host": args.host, "port": args.port, "tcp_port": args.tcp_port, "mask_port": args.mask_port,
         "wg_port": args.wg_port, "ss_base": args.ss_base, "dns": args.dns,
     }
+    if "ssh_gateway_port" not in cfg:
+        cfg["ssh_gateway_port"] = args.tcp_port  # старые установки: шлюз на том же порту
     if "wg_priv" in old and "wg_pub" in old:
         cfg["wg_priv"], cfg["wg_pub"] = old["wg_priv"], old["wg_pub"]  # ключ сервера WireGuard не меняем
     else:

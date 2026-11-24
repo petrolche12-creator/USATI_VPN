@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/ed25519"
 	"crypto/rand"
+	"io"
 	"net"
 	"testing"
 	"time"
@@ -170,3 +171,135 @@ func fmtSscan(s string, v *int) (int, error) {
 }
 
 var errBadPort = &authErr{}
+
+// serveForwardingSSH поднимает SSH-сервер с поддержкой прямых каналов (как sshd):
+// клиент может открыть канал до localhost:порт на «сервере», как в настоящей цепочке.
+func serveForwardingSSH(t *testing.T, password string) (addr string) {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := ssh.NewSignerFromKey(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &ssh.ServerConfig{
+		PasswordCallback: func(c ssh.ConnMetadata, p []byte) (*ssh.Permissions, error) {
+			if string(p) == password {
+				return nil, nil
+			}
+			return nil, errBadPass
+		},
+	}
+	cfg.AddHostKey(signer)
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	type directReq struct {
+		Host     string
+		Port     uint32
+		OrigHost string
+		OrigPort uint32
+	}
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				sc, chans, reqs, err := ssh.NewServerConn(c, cfg)
+				if err != nil {
+					return
+				}
+				defer sc.Close()
+				defer sc.Wait()
+				go func() {
+					for r := range reqs {
+						if r.WantReply {
+							_ = r.Reply(false, nil)
+						}
+					}
+				}()
+				for nc := range chans {
+					if nc.ChannelType() != "direct-tcpip" {
+						_ = nc.Reject(ssh.UnknownChannelType, "только direct-tcpip")
+						continue
+					}
+					var req directReq
+					if err := ssh.Unmarshal(nc.ExtraData(), &req); err != nil {
+						_ = nc.Reject(ssh.ConnectionFailed, "плохой запрос")
+						continue
+					}
+					go func(nc ssh.NewChannel, req directReq) {
+						target, err := net.DialTimeout("tcp",
+							net.JoinHostPort(req.Host, fmtSscanStr(int(req.Port))), 3*time.Second)
+						if err != nil {
+							_ = nc.Reject(ssh.ConnectionFailed, err.Error())
+							return
+						}
+						ch, chReqs, err := nc.Accept()
+						if err != nil {
+							target.Close()
+							return
+						}
+						go ssh.DiscardRequests(chReqs)
+						go func() { _, _ = io.Copy(target, ch); target.Close() }()
+						_, _ = io.Copy(ch, target)
+						ch.Close()
+					}(nc, req)
+				}
+			}()
+		}
+	}()
+	return ln.Addr().String()
+}
+
+// fmtSscanStr — минимальный int→string без лишних импортов в тесте.
+func fmtSscanStr(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	return string(b)
+}
+
+// TestDetectGatewayPortPicksListeningPort — регрессия на «handshake failed» на шаге 4.
+//
+// На сервере может быть старый config.json с одним портом, а слушать сервер будет
+// другой. Клиент обязан проверить, что порт реально принимает соединение, и выбрать
+// рабочий, иначе SSH-канал открывается на пустой порт и MTP-рукопожатие не проходит.
+func TestDetectGatewayPortPicksListeningPort(t *testing.T) {
+	busy, err := net.Listen("tcp", "127.0.0.1:18443")
+	if err != nil {
+		t.Skipf("порт 18443 занят: %v", err)
+	}
+	defer busy.Close()
+
+	addr := serveForwardingSSH(t, "секрет")
+	host, portStr, _ := net.SplitHostPort(addr)
+	var port int
+	fmtSscan(portStr, &port)
+
+	client, _, err := sshDialConn(sshTarget{Host: host, Port: port, User: "root", Pass: "секрет"},
+		func() (netConn, error) { return net.DialTimeout("tcp", addr, 5*time.Second) }, nil)
+	if err != nil {
+		t.Fatalf("SSH: %v", err)
+	}
+	defer client.Close()
+
+	// Конфиг говорит 8443, но слушает 18443 — клиент должен найти рабочий порт.
+	if got := detectGatewayPortFrom(client, 8443); got != 18443 {
+		t.Fatalf("выбран порт %d, ожидался рабочий 18443", got)
+	}
+	if got := detectGatewayPortFrom(client, 18443); got != 18443 {
+		t.Fatalf("порт из конфига рабочий, но выбран %d", got)
+	}
+}

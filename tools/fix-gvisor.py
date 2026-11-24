@@ -158,17 +158,6 @@ def main():
 
     collect(root)
 
-    # шаблоны не должны попадать в обычную сборку: они компилируются только через go_generics
-    for f in glob.glob(os.path.join(root, 'pkg', '**', '*_template.go'), recursive=True) + \
-            glob.glob(os.path.join(root, 'pkg', 'sync', 'locking', 'generic_*.go')):
-        text = open(f).read()
-        if 'go:build ignore' in text:
-            continue
-        m = re.search(r'^package\s+\S+', text, re.M)
-        if m:
-            with open(f, 'w') as fh:
-                fh.write(text[:m.start()] + '//go:build ignore\n\n' + text[m.start():])
-
     # сам генератор собираем из репозитория gVisor
     gg = os.path.join('/tmp/gvisorfix_bin', 'go_generics')
     os.makedirs(os.path.dirname(gg), exist_ok=True)
@@ -179,6 +168,17 @@ def main():
         print('не удалось собрать go_generics:\n' + (r.stderr or r.stdout)[:800])
         return 1
 
+    # если каталог испорчен прошлым запуском, убираем ошибочный тег у результатов
+    for pkg_dir, name, attrs in instances:
+        out = attrs.get('out', '').strip('"')
+        if not out:
+            continue
+        op = os.path.join(root, pkg_dir, out)
+        if os.path.exists(op):
+            t = open(op).read()
+            if '//go:build ignore' in t:
+                open(op, 'w').write(t.replace('//go:build ignore\n\n', '', 1))
+
     made, errors = 0, []
     for pkg_dir, name, attrs in instances:
         out, err = generate(root, gg, pkg_dir, attrs)
@@ -187,6 +187,26 @@ def main():
             print(f'  создан {pkg_dir}/{out}')
         elif err and err != 'уже есть':
             errors.append(f'{pkg_dir}/{name}: {err}')
+
+    # В gVisor тестовые шаблоны (mutex_test2.go и т.п.) лежат в каталоге пакета и без
+    # bazel-фильтра ломают сборку: "found packages locking and locking_test". Удаляем.
+    for f in glob.glob(os.path.join(root, 'pkg', 'sync', 'locking', '*_test*.go')):
+        os.remove(f)
+
+    # ВАЖНО: тег `ignore` ставим ПОСЛЕ генерации, и только самим шаблонам.
+    # go_generics копирует шапку шаблона в результат, поэтому если пометить шаблон
+    # заранее, сгенерированные bits64.go / *_list.go / *_mutex.go тоже получат
+    # `//go:build ignore` — и сборка ядра упадёт (undefined: MaskOf64 и т.п.).
+    only_templates = glob.glob(os.path.join(root, 'pkg', '**', '*_template.go'), recursive=True)
+    only_templates += glob.glob(os.path.join(root, 'pkg', 'sync', 'locking', 'generic_*.go'))
+    for f in only_templates:
+        text = open(f).read()
+        if 'go:build ignore' in text:
+            continue
+        m = re.search(r'^package\s+\S+', text, re.M)
+        if m:
+            with open(f, 'w') as fh:
+                fh.write(text[:m.start()] + '//go:build ignore\n\n' + text[m.start():])
 
     print(f'\nсоздано файлов: {made}')
     for e in errors[:20]:

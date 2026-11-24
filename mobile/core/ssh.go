@@ -166,28 +166,65 @@ func sshForward(c *ssh.Client, host string, port int) (net.Conn, error) {
 	return conn, nil
 }
 
-// detectGatewayPort читает порт MTP-шлюза из /opt/mtp/config.json на сервере.
-// Если файла нет или он не читается, возвращается стандартный 18443.
-func detectGatewayPort(c *ssh.Client) int {
-	const fallback = 18443
-	res, err := sshRun(c, "cat /opt/mtp/config.json 2>/dev/null", nil, nil)
-	if err != nil || res.Code != 0 {
-		return fallback
+// detectGatewayPortFrom выбирает рабочий порт шлюза: сначала предложенный (из конфига),
+// затем известные стандартные. Порт считается рабочим, только если через SSH-канал
+// удаётся открыть соединение до localhost:порт. Без такой проверки клиент уходил на
+// пустой порт и падал на MTP-рукопожатии («handshake failed» на шаге 4).
+func detectGatewayPortFrom(c *ssh.Client, fromConfig int) int {
+	const (
+		fallback = 18443
+		legacy   = 8443 // старые установки слушали tcp_port, а клиент ходил на 18443
+	)
+	candidates := []int{}
+	if fromConfig > 0 {
+		candidates = append(candidates, fromConfig)
 	}
-	if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
-		rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
-		rest = strings.TrimLeft(rest, " :\"")
-		var digits strings.Builder
-		for _, r := range rest {
-			if r >= '0' && r <= '9' {
-				digits.WriteRune(r)
-			} else {
-				break
+	for _, p := range []int{legacy, fallback} {
+		dup := false
+		for _, c := range candidates {
+			if c == p {
+				dup = true
 			}
 		}
-		if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
-			return n
+		if !dup {
+			candidates = append(candidates, p)
 		}
 	}
+	for _, port := range candidates {
+		conn, err := c.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = conn.Close()
+		return port
+	}
+	if fromConfig > 0 {
+		return fromConfig
+	}
 	return fallback
+}
+
+// detectGatewayPort читает порт MTP-шлюза из /opt/mtp/config.json на сервере
+// и проверяет, что он действительно принимает соединение.
+func detectGatewayPort(c *ssh.Client) int {
+	res, err := sshRun(c, "cat /opt/mtp/config.json 2>/dev/null", nil, nil)
+	fromConfig := 0
+	if err == nil && res.Code == 0 {
+		if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
+			rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
+			rest = strings.TrimLeft(rest, " :\"")
+			var digits strings.Builder
+			for _, r := range rest {
+				if r >= '0' && r <= '9' {
+					digits.WriteRune(r)
+				} else {
+					break
+				}
+			}
+			if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
+				fromConfig = n
+			}
+		}
+	}
+	return detectGatewayPortFrom(c, fromConfig)
 }

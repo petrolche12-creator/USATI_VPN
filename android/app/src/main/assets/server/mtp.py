@@ -44,6 +44,7 @@ import socket
 import struct
 import subprocess
 import sys
+import threading
 import time
 
 from cryptography.exceptions import InvalidTag
@@ -59,6 +60,13 @@ USAGE_PATH = os.path.join(BASE, "usage.json")
 STATE_PATH = os.path.join(BASE, "state.json")
 LOCK_PATH = os.path.join(BASE, ".lock")
 RUN_DIR = os.path.join(BASE, "run")
+
+# Шлюз для сессий через SSH-туннель программы: DNS 172.28.0.53 и шлюз 172.28.0.1 —
+# настоящие адреса на петле хоста (их ставит install.sh).
+TUNNEL_DNS = socket.inet_aton("172.28.0.53")
+# Адрес шлюза для «всего трафика»: настоящий адрес на петле хоста (ставит install.sh)
+TUNNEL_GW = "172.28.0.1"
+TUNNEL_NAT_NET = "172.28.0.0/16"
 
 TUN_NAME = "mtp0"
 SERVER_IP = "10.8.0.1"
@@ -162,7 +170,10 @@ def run_out(*cmd):
 def default_iface():
     out = subprocess.run(["ip", "-4", "route", "show", "default"], capture_output=True, text=True).stdout.split()
     if "dev" not in out:
-        die("нет маршрута по умолчанию, не могу настроить NAT")
+        # Без маршрута по умолчанию (тестовое пространство) NAT только внутри туннеля:
+        # выхода наружу всё равно нет, а сам сервер должен запуститься.
+        log("внимание: нет маршрута по умолчанию, NAT наружу не настраивается")
+        return ""
     return out[out.index("dev") + 1]
 
 
@@ -251,6 +262,10 @@ class UdpConn:
     stream = False
     __slots__ = ("tr", "addr")
 
+    @property
+    def local(self):
+        return False
+
     def __init__(self, tr, addr):
         self.tr = tr
         self.addr = addr
@@ -291,6 +306,12 @@ class StreamConn:
     def label(self):
         name = "MTP/3 маскировка" if self.mask else "MTP/2 TCP"
         return f"{self.peer[0]}:{self.peer[1]} ({name})"
+
+    @property
+    def local(self):
+        # Клиент пришёл с этого же сервера — значит, это SSH-туннель программы Usatyi VPN,
+        # а не удалённое устройство.
+        return self.peer[0] in ("127.0.0.1", "::1") or self.peer[0].startswith("172.28.")
 
 
 def encode_frame(data, mask):
@@ -337,12 +358,43 @@ class Session:
         self.last_rx = time.monotonic()
         self.last_status = 0.0
         self.since = now_ts()
+        self.local = bool(getattr(conn, "local", False))
 
 
 # ---------------------------------------------------------------- сервер
 
+class TunnelIP:
+    """Адреса для сессий через SSH-туннель: 172.28.x.y, освобождаются при отключении."""
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.used = {}  # ip -> метка владельца
+        self.free = []  # освободившиеся адреса
+        self.next = 0   # сколько адресов уже выдавали
+
+    def take(self, owner):
+        with self.lock:
+            if self.free:
+                ip = self.free.pop()
+            else:
+                n = self.next
+                self.next += 1
+                ip = f"172.28.{n // 254 + 1}.{n % 254 + 1}"
+            self.used[ip] = owner
+            return ip
+
+    def release(self, owner):
+        with self.lock:
+            for ip, who in list(self.used.items()):
+                if who == owner:
+                    del self.used[ip]
+                    self.free.append(ip)
+                    break
+
+
 class Server:
     def __init__(self, cfg):
+        self.tunnel_ip = TunnelIP()
         self.cfg = cfg
         self.dns = socket.inet_aton(cfg.get("dns", "1.1.1.1"))
         self.users = {}        # uid(hex) -> запись пользователя
@@ -427,6 +479,8 @@ class Server:
             del self.sessions[s.sid]
         if self.by_ip.get(s.ip) is s:
             del self.by_ip[s.ip]
+        if getattr(s, "local", False):
+            self.tunnel_ip.release(s.conn)
         if self.by_uid.get(s.uid) is s:
             del self.by_uid[s.uid]
         if why:
@@ -521,8 +575,14 @@ class Server:
         shared = priv.exchange(ec.ECDH(), cpub)
         k_c2s, k_s2c = derive_keys(shared, secret, cpub_b, spub_b)
         sid = self.new_sid()
-        ip = socket.inet_aton(self.users[uid]["ip"])
-        body = bytes([T_WELCOME]) + sid + ip + self.dns + struct.pack(">H", MTU) + spub_b
+        # Через SSH-туннель сессия получает адрес из 172.28.0.0/16: один ключ может работать
+        # одновременно и напрямую (10.8.0.x), и через туннель, не выбивая вторую сессию.
+        if conn.local:
+            ip = socket.inet_aton(self.tunnel_ip.take(sid))
+        else:
+            ip = socket.inet_aton(self.users[uid]["ip"])
+        dns = TUNNEL_DNS if conn.local else self.dns
+        body = bytes([T_WELCOME]) + sid + ip + dns + struct.pack(">H", MTU) + spub_b
         conn.send(body + tag16(secret, b"mtp1-welcome", cpub_b, body))
 
         old = self.by_uid.get(uid)
@@ -792,9 +852,34 @@ def setup_network():
             f.write("1")
     except OSError as e:
         log(f"не удалось включить ip_forward: {e}")
+    # Ответы из туннеля (172.28.0.0/16) уходят в mtp0: адрес шлюза 172.28.0.1 и DNS 172.28.0.53
+    # висят на петле хоста, а сервер отвечает клиенту через туннель.
+    run_quiet("ip", "route", "replace", TUNNEL_NAT_NET, "dev", TUN_NAME)
     wan = default_iface()
     ensure_rules(nat_rules(wan, SUBNET, TUN_NAME, mss_clamp=True))
+    if wan:
+        ensure_rules(tunnel_nat_rules(wan, TUN_NAME))
     log(f"MTP: NAT через интерфейс {wan}")
+
+
+def tunnel_nat_rules(wan, iface):
+    """NAT для сессий через SSH-туннель (адреса 172.28.0.0/16).
+
+    Весь трафик по умолчанию выходит через сам хост: шлюз 172.28.0.1 и DNS 172.28.0.53 —
+    настоящие адреса на петле хоста (их ставит install.sh), поэтому никакого DNAT не нужно.
+    SNAT на 127.0.0.1 оставлен для случаев, когда что-то на хосте само ходит на петлю.
+    """
+    loop = "127.0.0.0/8"
+    return [
+        (["-t", "nat", "-C", "POSTROUTING", "-s", TUNNEL_NAT_NET, "-o", wan, "-j", "MASQUERADE"],
+         ["-t", "nat", "-A", "POSTROUTING", "-s", TUNNEL_NAT_NET, "-o", wan, "-j", "MASQUERADE"]),
+        (["-t", "nat", "-C", "POSTROUTING", "-s", TUNNEL_NAT_NET, "-d", loop, "-j", "MASQUERADE"],
+         ["-t", "nat", "-A", "POSTROUTING", "-s", TUNNEL_NAT_NET, "-d", loop, "-j", "MASQUERADE"]),
+        (["-C", "FORWARD", "-i", iface, "-d", loop, "-j", "ACCEPT"],
+         ["-I", "FORWARD", "1", "-i", iface, "-d", loop, "-j", "ACCEPT"]),
+        (["-C", "FORWARD", "-o", iface, "-j", "ACCEPT"],
+         ["-I", "FORWARD", "1", "-o", iface, "-j", "ACCEPT"]),
+    ]
 
 
 def wg_setup(cfg):
@@ -918,20 +1003,28 @@ async def run_server(cfg):
     for rec in srv.usage.values():
         rec["ss_last"] = 0  # счётчики iptables новые, старую базу не используем
 
+    # MTP/1 (UDP) снаружи выключен: единственный вход в MTP-VPN — SSH-шлюз на localhost.
+    # Внутри шлюза работает MTP/2, потери пакетов исключены (TCP).
     transport, _ = await loop.create_datagram_endpoint(lambda: UdpProto(srv), local_addr=("0.0.0.0", cfg["port"]))
     srv.transport = transport
     sock = transport.get_extra_info("socket")
     for opt in (socket.SO_RCVBUF, socket.SO_SNDBUF):
         with contextlib.suppress(OSError):
             sock.setsockopt(socket.SOL_SOCKET, opt, 4 << 20)
-    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, False), "0.0.0.0", cfg["tcp_port"])
+    # MTP/2 слушает только localhost: клиент ходит к нему по SSH, порт наружу не открыт.
+    # Порт обязан совпадать с тем, что клиент читает из config.json (ssh_gateway_port),
+    # иначе SSH-канал открывается на «пустой» порт и MTP-рукопожатие не проходит.
+    gateway_port = int(cfg.get("ssh_gateway_port") or cfg["tcp_port"])
+    # На телефоне MTP/2 слушает наружу (не только localhost), но порт берётся тот же,
+    # что клиент читает из config.json: ssh_gateway_port.
+    tcp_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, False), "0.0.0.0", gateway_port)
     mask_srv = await asyncio.start_server(lambda r, w: handle_stream(srv, r, w, True), "0.0.0.0", cfg["mask_port"])
 
     stop = asyncio.Event()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, stop.set)
     task = asyncio.create_task(srv.housekeeping())
-    log(f"MTP/1 UDP {cfg['port']}, MTP/2 TCP {cfg['tcp_port']}, MTP/3 TCP {cfg['mask_port']}, "
+    log(f"MTP/1 UDP {cfg['port']}, MTP/2 TCP (SSH-шлюз) {gateway_port}, MTP/3 TCP {cfg['mask_port']}, "
         f"туннель {TUN_NAME} {SERVER_IP}/24")
     await stop.wait()
     task.cancel()
@@ -1044,7 +1137,7 @@ def make_key(cfg, uid, u):
     body = {
         "v": 2,
         "n": u["name"],
-        "h": cfg["host"],
+        "h": "127.0.0.1",  # MTP-VPN живёт за SSH-шлюзом: ключ работает только через туннель программы
         "u": uid,
         "s": u["secret"],
         "p": {"udp": cfg["port"], "tcp": cfg["tcp_port"], "mask": cfg["mask_port"],
@@ -1088,6 +1181,8 @@ def cmd_init(args):
         "host": args.host, "port": args.port, "tcp_port": args.tcp_port, "mask_port": args.mask_port,
         "wg_port": args.wg_port, "ss_base": args.ss_base, "dns": args.dns,
     }
+    if "ssh_gateway_port" not in cfg:
+        cfg["ssh_gateway_port"] = args.tcp_port  # старые установки: шлюз на том же порту
     if "wg_priv" in old and "wg_pub" in old:
         cfg["wg_priv"], cfg["wg_pub"] = old["wg_priv"], old["wg_pub"]  # ключ сервера WireGuard не меняем
     else:
@@ -1203,6 +1298,14 @@ def cmd_delete(args):
     emit(args, {"ok": True, "name": name}, f"ключ «{name}» удалён")
 
 
+def cmd_config_set(args):
+    with locked():
+        cfg = load_config()
+        cfg[args.key] = args.value
+        write_json_atomic(CONFIG_PATH, cfg, mode=0o600)
+    emit(args, {"ok": True, "key": args.key, "value": args.value}, f"{args.key} = {args.value}")
+
+
 def cmd_serve(args):
     if os.geteuid() != 0:
         die("serve нужно запускать от root (нужны TUN, iptables и WireGuard)")
@@ -1259,6 +1362,12 @@ def build_parser():
     s.add_argument("ident")
     s.add_argument("--json", action="store_true")
     s.set_defaults(func=cmd_delete)
+
+    s = sub.add_parser("config-set", help="изменить значение в конфиге сервера")
+    s.add_argument("--key", required=True)
+    s.add_argument("--value", required=True)
+    s.add_argument("--json", action="store_true")
+    s.set_defaults(func=cmd_config_set)
 
     s = sub.add_parser("serve", help="запустить сервер (для systemd)")
     s.set_defaults(func=cmd_serve)

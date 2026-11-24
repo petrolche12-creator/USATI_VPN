@@ -181,26 +181,62 @@ func sshPing(c *ssh.Client) error {
 // mtpGatewayPortDefault — порт, который mtp.py слушает только на localhost (шлюз для SSH-канала).
 const mtpGatewayPortDefault = 18443
 
-// detectGatewayPort читает порт шлюза из config.json на сервере.
+// mtpGatewayPortLegacy — порт, на котором слушали MTP/2 старые установки (tcp_port).
+const mtpGatewayPortLegacy = 8443
+
+// detectGatewayPort выбирает порт MTP-шлюза на хосте.
+//
+// Порт берётся из config.json (ssh_gateway_port), но конфиг мог остаться от старой
+// установки, а сервер слушать уже другой порт. Поэтому проверяем, что на хосте
+// действительно кто-то принимает соединение, и перебираем известные порты: сначала
+// из конфига, потом стандартные. Иначе SSH-канал открывался на пустой порт и клиент
+// падал на MTP-рукопожатии, хотя SSH-вход проходил успешно.
 func detectGatewayPort(c *ssh.Client, wrap func(string) string, stdin []byte) int {
 	res, err := sshRun(c, wrap("cat /opt/mtp/config.json"), stdin, nil)
-	if err != nil || res.Code != 0 {
-		return mtpGatewayPortDefault
-	}
-	if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
-		rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
-		rest = strings.TrimLeft(rest, " :\"")
-		var digits strings.Builder
-		for _, r := range rest {
-			if r >= '0' && r <= '9' {
-				digits.WriteRune(r)
-			} else {
-				break
+	fromConfig := 0
+	if err == nil && res.Code == 0 {
+		if i := strings.Index(res.Stdout, `"ssh_gateway_port"`); i >= 0 {
+			rest := res.Stdout[i+len(`"ssh_gateway_port"`):]
+			rest = strings.TrimLeft(rest, " :\"")
+			var digits strings.Builder
+			for _, r := range rest {
+				if r >= '0' && r <= '9' {
+					digits.WriteRune(r)
+				} else {
+					break
+				}
+			}
+			if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
+				fromConfig = n
 			}
 		}
-		if n, err := strconv.Atoi(digits.String()); err == nil && n > 0 && n < 65536 {
-			return n
+	}
+
+	var candidates []int
+	if fromConfig > 0 {
+		candidates = append(candidates, fromConfig)
+	}
+	for _, p := range []int{mtpGatewayPortLegacy, mtpGatewayPortDefault} {
+		dup := false
+		for _, c := range candidates {
+			if c == p {
+				dup = true
+			}
 		}
+		if !dup {
+			candidates = append(candidates, p)
+		}
+	}
+	for _, port := range candidates {
+		conn, err := c.Dial("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		_ = conn.Close()
+		return port
+	}
+	if fromConfig > 0 {
+		return fromConfig
 	}
 	return mtpGatewayPortDefault
 }

@@ -178,9 +178,16 @@ func TestLiveMTPOverSSH(t *testing.T) {
 		t.Fatalf("SSH: %v", err)
 	}
 	defer client.Close()
-	conn, err := sshForward(client, "127.0.0.1", envInt("USATYI_LIVE_MTP_PORT"))
+	// Порт шлюза выбираем так же, как в программе: читаем config.json и проверяем,
+	// что на хосте кто-то слушает. Если в конфиге записан неверный порт, клиент
+	// обязан найти рабочий — именно на этом раньше падало MTP-рукопожатие.
+	port := detectGatewayPort(client, func(s string) string { return s }, nil)
+	if want := envInt("USATYI_LIVE_MTP_PORT"); want > 0 && want != port {
+		t.Logf("порт из config.json/проверки: %d (в конфиге %d)", port, want)
+	}
+	conn, err := sshForward(client, "127.0.0.1", port)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("порт шлюза %d: %v", port, err)
 	}
 	link := newTCPLink(conn, false)
 	sess, err := Handshake(key, link)
