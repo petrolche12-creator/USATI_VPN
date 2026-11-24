@@ -15,6 +15,7 @@
 #   AAPT2=/path/to/aapt2   исполняемый aapt2 для Linux
 #   KOTLINC=/path/to/kotlinc
 #   JSCH=/path/to/jsch-0.1.55.jar
+#   KOTLIN_STDLIB=/path/to/kotlin-stdlib.jar   (по умолчанию рядом с kotlinc)
 #
 #   sh tools/build-apk.sh dist/UsatyiVPN.apk
 set -eu
@@ -36,8 +37,17 @@ KS="${KS:-$ROOT/android/app/usatyi-release.jks}"
 KS_PASS="${KS_PASS:-usatyi-vpn-2026}"
 KS_ALIAS="${KS_ALIAS:-usatyi}"
 
-echo "== ядро цепочки (arm64)"
-OUT_JNI="$APP/jniLibs" sh "$ROOT/mobile/build-android.sh"
+# kotlin-stdlib обязателен: без него приложение падает при старте
+# (NoClassDefFoundError: kotlin/jvm/internal/Intrinsics).
+KOTLIN_STDLIB="${KOTLIN_STDLIB:-$(cd "$(dirname "$KOTLINC")/../lib" && pwd)/kotlin-stdlib.jar}"
+test -f "$KOTLIN_STDLIB" || { echo "не найден kotlin-stdlib: $KOTLIN_STDLIB"; exit 1; }
+
+CORE="$APP/jniLibs/arm64-v8a/libusatyi_core.so"
+if [ "${BUILD_CORE:-1}" = "1" ]; then
+	echo "== ядро цепочки (arm64)"
+	OUT_JNI="$APP/jniLibs" sh "$ROOT/mobile/build-android.sh"
+fi
+test -f "$CORE" || { echo "нет ядра $CORE (соберите mobile/build-android.sh)"; exit 1; }
 
 echo "== ресурсы и R.java"
 "$AAPT2" compile --dir "$APP/res" -o "$WORK/res.zip"
@@ -53,7 +63,7 @@ PY
 "$AAPT2" link -o "$WORK/base.apk" \
 	-I "$TOOLS/android.jar" --manifest "$WORK/AndroidManifest.xml" \
 	--java "$WORK/gen" "$WORK/res.zip" \
-	--min-sdk-version 28 --target-sdk-version 34 --version-code 9 --version-name 1.3.0
+	--min-sdk-version 28 --target-sdk-version 34 --version-code 10 --version-name 1.3.1
 
 echo "== R.java (ECJ: javac не нужен)"
 mkdir -p "$WORK/rjava"
@@ -69,10 +79,26 @@ python3 "$ROOT/tools/gen_bindings.py" >/dev/null
 test -d "$WORK/classes" || { echo "Kotlin не собрался"; exit 1; }
 
 echo "== dex"
+# JSch тянет необязательный jzlib (сжатие SSH). Мы его не используем, а пакета нет —
+# поэтому класс сжатия вырезаем, иначе в dex остаётся «висячая» ссылка на jzlib.
+mkdir -p "$WORK/jsch"
+python3 - "$JSCH" "$WORK/jsch/jsch-min.jar" <<'PY'
+import sys, zipfile
+src, dst = sys.argv[1], sys.argv[2]
+zi = zipfile.ZipFile(src)
+zo = zipfile.ZipFile(dst, 'w', zipfile.ZIP_DEFLATED)
+for it in zi.infolist():
+    if it.filename == 'com/jcraft/jsch/jcraft/Compression.class':
+        continue
+    zo.writestr(it, zi.read(it.filename))
+zo.close()
+PY
+JSCH_MIN="$WORK/jsch/jsch-min.jar"
 mkdir -p "$WORK/dex"
 "$JAVA" -cp "$TOOLS/d8.jar" com.android.tools.r8.D8 --release --min-api 28 \
 	--lib "$TOOLS/android.jar" --output "$WORK/dex" \
-	$(find "$WORK/classes" -name '*.class') "$JSCH" 2>&1 | grep -v 'Info:\|Warning:' || true
+	$(find "$WORK/classes" -name '*.class') "$KOTLIN_STDLIB" "$JSCH_MIN" 2>&1 |
+	grep -v 'Info:\|Warning:\|malformed kotlin.Metadata\|error occurred when parsing kotlin metadata\|Unexpected error during rewriting\|Should never be called\|^\s*at ' || true
 test -f "$WORK/dex/classes.dex" || { echo "d8 не сделал classes.dex"; exit 1; }
 
 echo "== упаковка"
@@ -91,6 +117,9 @@ for root, _, files in os.walk(assets):
         z.write(p, 'assets/' + os.path.relpath(p, assets), zipfile.ZIP_DEFLATED)
 z.close()
 PY
+
+echo "== проверка, что все нужные классы внутри"
+python3 "$ROOT/tools/check-apk.py" "$WORK/dex/classes.dex" "$TOOLS/android.jar" 2>/dev/null
 
 echo "== подпись"
 mkdir -p "$(dirname "$OUT")"

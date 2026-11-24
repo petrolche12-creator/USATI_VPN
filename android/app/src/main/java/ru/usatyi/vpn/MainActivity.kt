@@ -12,6 +12,7 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.widget.Toast
 
 
@@ -93,6 +94,18 @@ class MainActivity : android.app.Activity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Если что-то пойдёт не так при сборке экрана, приложение всё равно откроется
+        // и покажет причину: без этого пользователь видит только «приложение закрыто».
+        try {
+            buildUi()
+        } catch (e: Throwable) {
+            Log.e("UsatyiVPN", "не удалось построить экран", e)
+            showCrashScreen(e)
+            return
+        }
+    }
+
+    private fun buildUi() {
         main = ActivityMainBinding.inflate(layoutInflater)
         setContentView(main.root)
 
@@ -145,6 +158,45 @@ class MainActivity : android.app.Activity() {
     override fun onPause() {
         handler.removeCallbacks(ticker)
         super.onPause()
+    }
+
+    /**
+     * Аварийный экран: вместо закрытия приложения показываем, что именно сломалось.
+     * Кнопка «Скопировать» отдаёт текст ошибки — по нему видно причину без отладки по кабелю.
+     */
+    private fun showCrashScreen(e: Throwable) {
+        val error = Log.getStackTraceString(e)
+        val pad = (16 * resources.displayMetrics.density).toInt()
+        val text = android.widget.TextView(this).apply {
+            this.text = "Приложение не смогло открыться.\n\n" +
+                (e.message ?: e.javaClass.name) + "\n\n" +
+                "Нажмите «Скопировать» и пришлите текст разработчику."
+            textSize = 15f
+            setTextIsSelectable(true)
+            setPadding(pad, pad, pad, pad)
+        }
+        val copy = android.widget.Button(this).apply {
+            setText("Скопировать ошибку")
+            isAllCaps = false
+            setOnClickListener {
+                getSystemService(android.content.ClipboardManager::class.java)
+                    ?.setPrimaryClip(ClipData.newPlainText("Ошибка UsatyiVPN", error))
+                toast("Текст ошибки скопирован")
+            }
+        }
+        val details = android.widget.TextView(this).apply {
+            this.text = e.javaClass.name
+            textSize = 13f
+            setPadding(pad, 0, pad, pad)
+        }
+        val column = android.widget.LinearLayout(this).apply {
+            orientation = android.widget.LinearLayout.VERTICAL
+            addView(text)
+            addView(copy)
+            addView(details)
+        }
+        val scroll = android.widget.ScrollView(this).apply { addView(column) }
+        setContentView(scroll)
     }
 
     /** 0 — «Подключиться», 1 — «Создать», 2 — «Настройки». */

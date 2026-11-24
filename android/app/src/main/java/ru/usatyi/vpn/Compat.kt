@@ -68,7 +68,11 @@ fun rounded(color: Int, radiusDp: Float, strokeDp: Float = 0f, strokeColor: Int 
     }
 
 /** Карточка: FrameLayout с фоном (замена com.google.android.material.card.MaterialCardView). */
-class CardView(context: Context) : FrameLayout(context) {
+class CardView @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+    defStyle: Int = 0,
+) : FrameLayout(context, attrs, defStyle) {
     private var radius = 20f
     private var bg = Theme.surfaceVariant
     private var strokeW = 0f
@@ -105,7 +109,11 @@ class CardView(context: Context) : FrameLayout(context) {
 }
 
 /** Индикатор расхода трафика (замена LinearProgressIndicator). */
-class ProgressLine(context: Context) : View(context) {
+class ProgressLine @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+    defStyle: Int = 0,
+) : View(context, attrs, defStyle) {
     var progress: Int = 0
         set(value) {
             field = value.coerceIn(0, 100)
@@ -132,7 +140,11 @@ class ProgressLine(context: Context) : View(context) {
 }
 
 /** Нижняя навигация из системных кнопок (замена BottomNavigationView). */
-class BottomBar(context: Context) : LinearLayout(context) {
+class BottomBar @JvmOverloads constructor(
+    context: Context,
+    attrs: android.util.AttributeSet? = null,
+    defStyle: Int = 0,
+) : LinearLayout(context, attrs, defStyle) {
     private val titles = mutableListOf<String>()
     private val buttons = mutableListOf<TextView>()
     var onPick: ((Int) -> Unit)? = null
